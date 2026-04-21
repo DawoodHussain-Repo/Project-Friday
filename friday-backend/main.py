@@ -1,3 +1,14 @@
+"""
+FastAPI application for Project Friday.
+
+Routes
+------
+- ``POST /chat``      — SSE-streaming chat endpoint.
+- ``GET  /workspace``  — Recursive file tree of the sandbox workspace.
+- ``GET  /skills``     — Registered skill scripts from the library.
+- ``GET  /agents``     — Registered Skill Agents (framework agents).
+"""
+
 import json
 import os
 import uuid
@@ -12,12 +23,13 @@ from pydantic import BaseModel
 
 from agent.graph import graph
 from agent.tools.os_tools import WORKSPACE_DIR
+from agent.tools.skill_agent import get_all_skill_agent_names, load_skill_context
 from agent.tools.skill_library import load_skill_index
 
 load_dotenv()
 
-RECURSION_LIMIT = int(os.getenv("RECURSION_LIMIT", "25"))
-NEXTJS_ORIGIN = os.getenv("NEXTJS_ORIGIN", "http://localhost:3000")
+RECURSION_LIMIT: int = int(os.getenv("RECURSION_LIMIT", "25"))
+NEXTJS_ORIGIN: str = os.getenv("NEXTJS_ORIGIN", "http://localhost:3000")
 
 
 class ChatRequest(BaseModel):
@@ -25,7 +37,11 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
 
 
-app = FastAPI(title="Project Friday API", version="0.1.0")
+app = FastAPI(
+    title="Project Friday API",
+    version="0.2.0",
+    description="A self-improving, tool-using AI agent with a ReAct brain.",
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -34,6 +50,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# SSE helpers
+# ---------------------------------------------------------------------------
 
 
 def _sse_payload(event_type: str, content: str) -> str:
@@ -57,6 +78,11 @@ def _normalize_message_content(content: Any) -> str:
     return json.dumps(content, ensure_ascii=True, default=str)
 
 
+# ---------------------------------------------------------------------------
+# Chat endpoint
+# ---------------------------------------------------------------------------
+
+
 async def event_stream(query: str, conversation_id: str | None, request: Request):
     thread_id = conversation_id or str(uuid.uuid4())
     seen_agent_signatures: set[str] = set()
@@ -66,11 +92,19 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
         "messages": [HumanMessage(content=query)],
         "tool_attempts": 0,
         "active_skill": None,
+        "skill_context": None,
+        "target_directory": None,
+        "error_history": [],
     }
-    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": RECURSION_LIMIT}
+    config = {
+        "configurable": {"thread_id": thread_id},
+        "recursion_limit": RECURSION_LIMIT,
+    }
 
     try:
-        async for update in graph.astream(initial_state, config=config, stream_mode="updates"):
+        async for update in graph.astream(
+            initial_state, config=config, stream_mode="updates"
+        ):
             if await request.is_disconnected():
                 break
 
@@ -81,10 +115,14 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
 
                 if node_name == "agent" and messages:
                     agent_message = messages[-1]
-                    text = _normalize_message_content(getattr(agent_message, "content", ""))
+                    text = _normalize_message_content(
+                        getattr(agent_message, "content", "")
+                    )
                     tool_calls = getattr(agent_message, "tool_calls", []) or []
                     message_id = str(getattr(agent_message, "id", ""))
-                    call_signature = json.dumps(tool_calls, ensure_ascii=True, default=str, sort_keys=True)
+                    call_signature = json.dumps(
+                        tool_calls, ensure_ascii=True, default=str, sort_keys=True
+                    )
                     agent_signature = f"{message_id}|{text}|{call_signature}"
 
                     if agent_signature in seen_agent_signatures:
@@ -96,7 +134,9 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
                             yield _sse_payload("thought", str(text))
                         for call in tool_calls:
                             tool_name = call.get("name", "unknown_tool")
-                            args = json.dumps(call.get("args", {}), ensure_ascii=True)
+                            args = json.dumps(
+                                call.get("args", {}), ensure_ascii=True
+                            )
                             yield _sse_payload("tool_call", f"{tool_name} {args}")
                     else:
                         if text:
@@ -108,15 +148,21 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
                             continue
 
                         tool_name = getattr(message, "name", "tool")
-                        serialized_output = _normalize_message_content(getattr(message, "content", ""))
+                        serialized_output = _normalize_message_content(
+                            getattr(message, "content", "")
+                        )
                         message_id = str(getattr(message, "id", ""))
-                        tool_signature = f"{message_id}|{tool_name}|{serialized_output}"
+                        tool_signature = (
+                            f"{message_id}|{tool_name}|{serialized_output}"
+                        )
 
                         if tool_signature in seen_tool_signatures:
                             continue
                         seen_tool_signatures.add(tool_signature)
 
-                        yield _sse_payload("tool_result", f"[{tool_name}] {serialized_output}")
+                        yield _sse_payload(
+                            "tool_result", f"[{tool_name}] {serialized_output}"
+                        )
     except Exception as exc:
         yield _sse_payload("final", f"Friday failed: {exc}")
 
@@ -127,6 +173,11 @@ async def chat(body: ChatRequest, request: Request):
         event_stream(body.query, body.conversation_id, request),
         media_type="text/event-stream",
     )
+
+
+# ---------------------------------------------------------------------------
+# Workspace tree
+# ---------------------------------------------------------------------------
 
 
 def _build_tree(path: str, root: str) -> list[dict[str, Any]]:
@@ -158,6 +209,11 @@ async def get_workspace_tree():
     return {"tree": tree}
 
 
+# ---------------------------------------------------------------------------
+# Skills & Agents listings
+# ---------------------------------------------------------------------------
+
+
 @app.get("/skills")
 async def get_skills():
     index = load_skill_index()
@@ -170,3 +226,14 @@ async def get_skills():
         for name, data in index.items()
     ]
     return {"skills": skills}
+
+
+@app.get("/agents")
+async def get_agents():
+    """Return a list of registered Skill Agents."""
+    agent_names = get_all_skill_agent_names()
+    agents = []
+    for name in agent_names:
+        context = load_skill_context.invoke({"skill_name": name})
+        agents.append({"name": name, "context_preview": context[:300]})
+    return {"agents": agents}
