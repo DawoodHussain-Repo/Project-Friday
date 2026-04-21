@@ -1,0 +1,523 @@
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ───────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{parskip}
+
+% ── Colours ────────────────────────────────────────────────────
+\definecolor{fridaybrand}{HTML}{1E5A96}
+\definecolor{codebg}{HTML}{F5F2EB}
+\definecolor{codefg}{HTML}{23211E}
+\definecolor{rulegreen}{HTML}{2E7D32}
+\definecolor{rulered}{HTML}{C62828}
+\definecolor{sectionblue}{HTML}{1565C0}
+
+% ── Hyperlinks ─────────────────────────────────────────────────
+\hypersetup{
+  colorlinks  = true,
+  linkcolor   = fridaybrand,
+  urlcolor    = fridaybrand,
+  citecolor   = fridaybrand,
+}
+
+% ── Code listings ──────────────────────────────────────────────
+\lstset{
+  backgroundcolor = \color{codebg},
+  basicstyle      = \ttfamily\small\color{codefg},
+  breaklines      = true,
+  frame           = single,
+  rulecolor       = \color{fridaybrand!30},
+  numbers         = left,
+  numberstyle     = \tiny\color{gray},
+  tabsize         = 4,
+  showstringspaces= false,
+  captionpos      = b,
+}
+
+% ── Section styling ────────────────────────────────────────────
+\titleformat{\section}
+  {\Large\bfseries\color{sectionblue}}{\thesection}{1em}{}
+\titleformat{\subsection}
+  {\large\bfseries\color{fridaybrand}}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\color{fridaybrand!80}}{\thesubsubsection}{1em}{}
+
+% ── Header / Footer ───────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textcolor{fridaybrand}{\textbf{Project Friday}}}
+\fancyhead[R]{\textcolor{gray}{Architecture Document}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ── Callout boxes ──────────────────────────────────────────────
+\newtcolorbox{notebox}{
+  colback=blue!5, colframe=fridaybrand, title=Note,
+  fonttitle=\bfseries, arc=2mm
+}
+\newtcolorbox{warningbox}{
+  colback=red!5, colframe=rulered, title=Warning,
+  fonttitle=\bfseries, arc=2mm
+}
+\newtcolorbox{tipbox}{
+  colback=green!5, colframe=rulegreen, title=Tip,
+  fonttitle=\bfseries, arc=2mm
+}
+
+% ══════════════════════════════════════════════════════════════
+\begin{document}
+
+% ── Title ──────────────────────────────────────────────────────
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\Huge\bfseries\color{fridaybrand} Project Friday\par}
+\vspace{0.6cm}
+{\Large Architecture \& Design Document\par}
+\vspace{1.5cm}
+{\large A self-improving, tool-using AI agent\\with a ReAct brain, sandboxed OS hands,\\and a growing skill library.\par}
+\vspace{2cm}
+{\normalsize Version 0.2.0\par}
+{\normalsize \today\par}
+\vspace{1cm}
+{\small Stack: Python 3.11+ $\cdot$ FastAPI $\cdot$ LangGraph $\cdot$ LangChain $\cdot$ Next.js 15 $\cdot$ React 19 $\cdot$ TypeScript\par}
+\vfill
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ══════════════════════════════════════════════════════════════
+\section{Vision \& Scope}
+
+Friday is a personal agentic AI assistant that reasons over a set of tools to complete tasks---from fetching recent CVEs to scaffolding a Next.js component.  It operates on a \textbf{ReAct loop} (Reason $\to$ Act $\to$ Observe $\to$ Reason again) rather than a linear pipeline, meaning it genuinely decides what to do next instead of following a hardcoded flow.
+
+\subsection{Design Philosophy}
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Agent, not chatbot.}  Every response is the result of tool-augmented reasoning.
+  \item \textbf{Self-improving.}  The Voyager-inspired skill library lets Friday write, test, and commit reusable scripts and framework agents.
+  \item \textbf{Security by default.}  All OS access is sandboxed; shell commands are allow\-listed; external directories require explicit opt-in.
+  \item \textbf{Local-first.}  LM~Studio is the default provider---no cloud API keys required to start.
+\end{enumerate}
+
+% ══════════════════════════════════════════════════════════════
+\section{System Architecture}
+
+\begin{lstlisting}[language={},title={High-level data flow}]
++--------------------------------------------------------+
+|                  Next.js Frontend                       |
+|  Chat UI --SSE Stream--> /api/friday (route handler)   |
++----------------------------+---------------------------+
+                             | HTTP POST
++----------------------------v---------------------------+
+|                  FastAPI Backend                        |
+|  POST /chat --> LangGraph executor --SSE--> client     |
+|  GET  /workspace --> file tree snapshot                 |
+|  GET  /skills    --> registered skill index             |
+|  GET  /agents    --> registered Skill Agents            |
++----------------------------+---------------------------+
+                             |
++----------------------------v---------------------------+
+|               LangGraph State Machine                   |
+|                                                         |
+|   +----------+  tool_call?  +--------------------+     |
+|   |  Agent   | --- YES ---> |  Tool Executor     |     |
+|   |  Node    | <----------- |  Node (cached)     |     |
+|   |  (LLM)  |              +--------------------+     |
+|   +----+-----+                                         |
+|        | NO (final answer)                              |
+|        v                                                |
+|      END                                                |
++---------------------------------------------------------+
+\end{lstlisting}
+
+\subsection{Component Responsibilities}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Component} & \textbf{Responsibility} \\
+\midrule
+\texttt{main.py} & FastAPI application, routes, SSE streaming, CORS \\
+\texttt{agent/graph.py} & LangGraph \texttt{StateGraph} definition, cached tool node \\
+\texttt{agent/nodes.py} & Agent node (LLM invocation with system prompt), router, retry logic \\
+\texttt{agent/state.py} & \texttt{AgentState} TypedDict flowing through every node \\
+\texttt{agent/system\_prompt.py} & Friday's identity, ReAct instructions, dynamic context injection \\
+\texttt{agent/model.py} & Multi-provider LLM factory (LM~Studio, Groq, Ollama) \\
+\texttt{agent/tools/} & All tool implementations (see Section~\ref{sec:tools}) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════
+\section{Agent State}
+
+The \texttt{AgentState} TypedDict flows through every node:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}llp{7cm}@{}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Purpose} \\
+\midrule
+\texttt{messages} & \texttt{list} & Conversation history (LangGraph's \texttt{add\_messages} reducer) \\
+\texttt{tool\_attempts} & \texttt{int} & Retry counter for the current tool/script \\
+\texttt{active\_skill} & \texttt{str|None} & Path of the skill script being executed \\
+\texttt{skill\_context} & \texttt{str|None} & Loaded Skill Agent style guide (injected into system prompt) \\
+\texttt{target\_directory} & \texttt{str|None} & External project directory (must be in \texttt{ALLOWED\_TARGET\_DIRS}) \\
+\texttt{error\_history} & \texttt{list[str]} & Rolling log of error messages for retry decisions \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════
+\section{Tools}
+\label{sec:tools}
+
+\subsection{File Operations}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Tool} & \textbf{Description} \\
+\midrule
+\texttt{list\_files} & Lists files/folders at a given workspace-relative path \\
+\texttt{read\_file} & Reads full contents of a workspace file \\
+\texttt{write\_to\_file} & Creates or overwrites a workspace file \\
+\texttt{append\_to\_file} & Appends content to an existing file (or creates it) \\
+\texttt{create\_directory} & Creates a directory (and parents) inside the workspace \\
+\texttt{delete\_file} & Deletes a single file (not directories) from the workspace \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Shell Execution}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Tool} & \textbf{Description} \\
+\midrule
+\texttt{execute\_bash\_command} & Runs an allowlisted command inside the workspace sandbox \\
+\texttt{execute\_in\_directory} & Runs an allowlisted command in an external allowed directory \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{notebox}
+Shell commands are validated against a configurable \textbf{allowlist} (first token must match).  Shell chaining operators (\texttt{\&\&}, \texttt{||}, \texttt{;}, \texttt{|}) are rejected.  Timeout defaults to 120 seconds.
+\end{notebox}
+
+\subsection{Web Search}
+
+\texttt{web\_search} queries the web via Tavily (if configured) or DuckDuckGo (fallback), returning the top 3 result summaries.
+
+\subsection{Skill Library}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Tool} & \textbf{Description} \\
+\midrule
+\texttt{save\_to\_skill\_library} & Moves a tested script from workspace into the skills directory \\
+\texttt{search\_skill\_library} & Finds the closest matching skill by description similarity \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Skill Agents}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Tool} & \textbf{Description} \\
+\midrule
+\texttt{create\_skill\_agent} & Creates a new framework-specific Skill Agent with manifest, style guide, and templates directory \\
+\texttt{load\_skill\_context} & Loads an agent's manifest and style guide into the LLM context \\
+\texttt{list\_skill\_agents} & Lists all registered Skill Agents and their descriptions \\
+\texttt{update\_skill\_agent} & Patches an existing agent's rules, description, or scaffold steps \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════
+\section{Skill Agent System}
+
+The Skill Agent system is the core differentiator---it allows Friday to \textbf{teach itself} new frameworks and domains at runtime.
+
+\subsection{Directory Structure}
+
+\begin{lstlisting}[language={},title={Skill Agent layout}]
+skills/
+  index.json              # Script skill registry
+  agents/
+    nextjs/
+      manifest.json       # Metadata, triggers, dos/don'ts
+      style_guide.md      # Auto-generated best-practice doc
+      templates/          # Optional starter files
+    fastapi/
+      manifest.json
+      style_guide.md
+      templates/
+\end{lstlisting}
+
+\subsection{Manifest Schema}
+
+Each Skill Agent is defined by a \texttt{manifest.json} with the following fields:
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}llp{6.5cm}@{}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{name} & string & Slugified agent name (e.g.\ \texttt{nextjs}) \\
+\texttt{display\_name} & string & Human-readable name (e.g.\ \texttt{Next.js}) \\
+\texttt{version} & string & Semantic version \\
+\texttt{description} & string & What this agent handles \\
+\texttt{trigger\_patterns} & string[] & Keywords that activate this agent \\
+\texttt{rules.do} & string[] & Best-practice rules to follow \\
+\texttt{rules.dont} & string[] & Anti-patterns to avoid \\
+\texttt{scaffold\_steps} & string[] & Shell commands to set up a new project \\
+\texttt{created\_at} & ISO 8601 & Creation timestamp \\
+\texttt{updated\_at} & ISO 8601 & Last modification timestamp \\
+\texttt{auto\_generated} & boolean & Whether the LLM created this agent \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Lifecycle}
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Detection:} User asks to work with a framework (e.g.\ ``Create a Next.js project'').
+  \item \textbf{Lookup:} Agent calls \texttt{search\_skill\_library("next.js")}.
+  \item \textbf{Creation (first time):} No match found $\to$ agent calls \texttt{create\_skill\_agent(...)} with framework-specific dos, don'ts, scaffold steps, and trigger patterns.
+  \item \textbf{Loading:} Agent calls \texttt{load\_skill\_context("nextjs")} $\to$ style guide is injected into the system prompt.
+  \item \textbf{Execution:} Agent follows the loaded rules strictly while scaffolding the project.
+  \item \textbf{Evolution:} If the agent learns new patterns or encounters errors, it calls \texttt{update\_skill\_agent(...)} to refine the rules.
+\end{enumerate}
+
+\begin{tipbox}
+On subsequent requests involving the same framework, the agent skips creation and immediately loads the existing agent's context---making it faster and more consistent over time.
+\end{tipbox}
+
+% ══════════════════════════════════════════════════════════════
+\section{Security Model}
+
+\subsection{Path Sandboxing}
+
+All file operations go through \texttt{safe\_path()}, which enforces:
+
+\begin{itemize}[leftmargin=*]
+  \item \textbf{No absolute paths} inside the workspace.
+  \item \textbf{No traversal} via \texttt{../../} or similar.
+  \item \textbf{Symlink detection:} if resolving a path follows a symlink, the target must still be inside the workspace.
+  \item \textbf{Blocked segments:} paths containing \texttt{.env}, \texttt{.ssh}, \texttt{.git}, \texttt{.gnupg}, or \texttt{.aws} are rejected.
+\end{itemize}
+
+For operations outside the workspace, \texttt{safe\_target\_path()} validates against \texttt{ALLOWED\_TARGET\_DIRS}.
+
+\subsection{Command Allowlist}
+
+The blocklist-based approach was replaced with an \textbf{allowlist}:
+
+\begin{itemize}[leftmargin=*]
+  \item Only the first token of a command is checked against a configurable list of permitted prefixes.
+  \item Shell chaining operators (\texttt{\&\&}, \texttt{||}, \texttt{;}, \texttt{|}, backticks, \texttt{\$()}) are rejected.
+  \item The allowlist is stored in the \texttt{COMMAND\_ALLOWLIST} environment variable.
+\end{itemize}
+
+\begin{warningbox}
+The command is still executed with \texttt{shell=True} for compatibility with complex commands.  For maximum security in production, consider switching to container-based isolation (Docker, Firejail, or Windows Sandbox).
+\end{warningbox}
+
+\subsection{Skill Script Execution}
+
+Committed skill scripts are executed with \texttt{subprocess.run([sys.executable, path, ...args])}---\textbf{no shell injection} is possible because:
+
+\begin{itemize}[leftmargin=*]
+  \item Arguments are passed as a list, not interpolated into a string.
+  \item \texttt{shell=True} is NOT used for skill execution.
+  \item The Python interpreter is resolved via \texttt{sys.executable}.
+\end{itemize}
+
+\subsection{Retry \& Recursion Limits}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}llp{7cm}@{}}
+\toprule
+\textbf{Limit} & \textbf{Default} & \textbf{Purpose} \\
+\midrule
+\texttt{MAX\_TOOL\_ATTEMPTS} & 3 & Max retries for a failing tool before bailing \\
+\texttt{RECURSION\_LIMIT} & 25 & Hard cap on LangGraph cycles per request \\
+\texttt{MAX\_TOKENS} & 2048 & Max tokens per LLM response \\
+\texttt{COMMAND\_TIMEOUT} & 120s & Max runtime for any subprocess \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════
+\section{System Prompt}
+
+The agent receives a comprehensive system prompt on every invocation, assembled by \texttt{build\_system\_prompt()}:
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Static core:} Identity, ReAct instructions, tool usage rules, skill agent workflow, self-improvement protocol, and safety constraints.
+  \item \textbf{Dynamic skill context:} When a Skill Agent is loaded, its style guide (dos, don'ts, scaffold steps) is appended as an additional section.
+  \item \textbf{Extra instructions:} Per-task overrides can be injected programmatically.
+\end{enumerate}
+
+This ensures the LLM always knows:
+\begin{itemize}[leftmargin=*]
+  \item It is called ``Friday'' and operates as an agent, not a chatbot.
+  \item Which tools are available and when to use each.
+  \item How to find, create, and follow Skill Agents.
+  \item Its safety boundaries.
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════
+\section{LLM Provider Configuration}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}llp{6cm}@{}}
+\toprule
+\textbf{Provider} & \textbf{Model} & \textbf{Use Case} \\
+\midrule
+LM~Studio (local) & auto-detected & Default---fast, free, offline \\
+Groq & \texttt{llama-3.3-70b-versatile} & Speed-optimized cloud fallback \\
+Ollama & \texttt{qwen2.5-coder:7b} & Offline code generation \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The provider is selected via \texttt{MODEL\_PROVIDER} in \texttt{.env}.  LM~Studio uses auto-discovery (\texttt{/v1/models} endpoint) to find loaded models.
+
+% ══════════════════════════════════════════════════════════════
+\section{Frontend Architecture}
+
+\subsection{Component Tree}
+
+\begin{lstlisting}[language={},title={React component hierarchy}]
+RootLayout (layout.tsx)
+  HomePage (page.tsx)
+    FridayChat
+      MessageBubble (per event)
+      ThinkingIndicator (during streaming)
+      WorkspacePanel | SkillsPanel (sidebar tabs)
+\end{lstlisting}
+
+\subsection{SSE Stream Hook}
+
+\texttt{useFridayStream()} manages the full lifecycle:
+
+\begin{enumerate}[leftmargin=*]
+  \item Creates a conversation ID (persists across messages in one session).
+  \item Sends the query via \texttt{POST /api/friday}.
+  \item Reads the SSE stream via \texttt{ReadableStream} API.
+  \item Deduplicates events to prevent repeated rendering.
+  \item Supports abort (Stop button) and reset (New Chat).
+\end{enumerate}
+
+\subsection{Event Types}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}llp{6cm}@{}}
+\toprule
+\textbf{Type} & \textbf{Source} & \textbf{UI Rendering} \\
+\midrule
+\texttt{user} & Frontend & Right-aligned blue bubble \\
+\texttt{thought} & Agent reasoning & Dimmed dashed-border card with ``Reasoning step'' badge \\
+\texttt{tool\_call} & Agent $\to$ tool & Dashed card with ``Tool call'' badge and JSON args \\
+\texttt{tool\_result} & Tool $\to$ agent & Collapsible \texttt{<details>} with ``Tool result'' badge \\
+\texttt{final} & Agent answer & Full left-aligned message bubble \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════
+\section{Project Structure}
+
+\begin{lstlisting}[language={},title={Full monorepo layout}]
+Project-Friday/
+  README.md
+  Project-info.txt
+  run-friday.ps1              # One-command launcher
+  docs/
+    friday_architecture.tex   # This document
+    friday_api_reference.tex  # API reference
+  friday-backend/
+    main.py                   # FastAPI app + routes
+    requirements.txt
+    .env / .env.example
+    agent/
+      __init__.py
+      graph.py                # LangGraph state machine
+      nodes.py                # Agent node, router, retry
+      state.py                # AgentState TypedDict
+      system_prompt.py        # System prompt builder
+      model.py                # LLM provider factory
+      tools/
+        __init__.py           # Tool registry
+        os_tools.py           # File + shell tools
+        web_search.py         # Tavily / DuckDuckGo
+        skill_library.py      # Save / search skills
+        skill_agent.py        # Skill Agent CRUD
+    workspace/                # Sandboxed file system
+    skills/
+      index.json              # Script skill registry
+      agents/                 # Skill Agent definitions
+  friday-frontend/
+    app/
+      page.tsx                # Root page
+      layout.tsx              # Fonts + metadata
+      globals.css             # Design tokens
+      api/friday/
+        route.ts              # Proxy: chat + workspace
+        skills/route.ts       # Proxy: skills
+        agents/route.ts       # Proxy: agents
+    components/
+      FridayChat.tsx          # Main chat container
+      MessageBubble.tsx       # Event renderer
+      ThinkingIndicator.tsx   # Streaming dots
+      WorkspacePanel.tsx      # File tree sidebar
+      SkillsPanel.tsx         # Skills + agents sidebar
+    hooks/
+      useFridayStream.ts      # SSE consumer hook
+    lib/
+      api.ts                  # Typed API client
+\end{lstlisting}
+
+% ══════════════════════════════════════════════════════════════
+\section{Future Enhancements}
+
+\begin{enumerate}[leftmargin=*]
+  \item \textbf{Semantic skill search:} Replace \texttt{SequenceMatcher} with embedding-based lookup (ChromaDB or LanceDB).
+  \item \textbf{Persistent memory:} Replace \texttt{MemorySaver} with SQLite or file-based checkpointer for conversation persistence across restarts.
+  \item \textbf{MCP integration:} Connect to Model Context Protocol servers for external tool providers.
+  \item \textbf{Multi-language skills:} Support non-Python skill scripts (Node.js, Bash, Go).
+  \item \textbf{Container isolation:} Run tool commands in Docker containers for production-grade sandboxing.
+  \item \textbf{Authentication:} Add API key or JWT-based auth for production deployments.
+\end{enumerate}
+
+\end{document}

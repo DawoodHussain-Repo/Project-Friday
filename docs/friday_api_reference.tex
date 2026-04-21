@@ -1,0 +1,443 @@
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ───────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{parskip}
+\usepackage{longtable}
+
+% ── Colours ────────────────────────────────────────────────────
+\definecolor{fridaybrand}{HTML}{1E5A96}
+\definecolor{codebg}{HTML}{F5F2EB}
+\definecolor{codefg}{HTML}{23211E}
+\definecolor{getgreen}{HTML}{2E7D32}
+\definecolor{postorange}{HTML}{E65100}
+\definecolor{sectionblue}{HTML}{1565C0}
+
+% ── Hyperlinks ─────────────────────────────────────────────────
+\hypersetup{
+  colorlinks  = true,
+  linkcolor   = fridaybrand,
+  urlcolor    = fridaybrand,
+}
+
+% ── Code listings ──────────────────────────────────────────────
+\lstset{
+  backgroundcolor = \color{codebg},
+  basicstyle      = \ttfamily\small\color{codefg},
+  breaklines      = true,
+  frame           = single,
+  rulecolor       = \color{fridaybrand!30},
+  tabsize         = 2,
+  showstringspaces= false,
+  captionpos      = b,
+}
+\lstdefinelanguage{json}{
+  morestring=[b]",
+  literate=
+    *{0}{{{\color{blue}0}}}{1}
+     {1}{{{\color{blue}1}}}{1}
+     {2}{{{\color{blue}2}}}{1}
+     {3}{{{\color{blue}3}}}{1}
+     {4}{{{\color{blue}4}}}{1}
+     {5}{{{\color{blue}5}}}{1}
+     {6}{{{\color{blue}6}}}{1}
+     {7}{{{\color{blue}7}}}{1}
+     {8}{{{\color{blue}8}}}{1}
+     {9}{{{\color{blue}9}}}{1}
+}
+
+% ── Section styling ────────────────────────────────────────────
+\titleformat{\section}
+  {\Large\bfseries\color{sectionblue}}{\thesection}{1em}{}
+\titleformat{\subsection}
+  {\large\bfseries\color{fridaybrand}}{\thesubsection}{1em}{}
+\titleformat{\subsubsection}
+  {\normalsize\bfseries\color{fridaybrand!80}}{\thesubsubsection}{1em}{}
+
+% ── Header / Footer ───────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\textcolor{fridaybrand}{\textbf{Project Friday}}}
+\fancyhead[R]{\textcolor{gray}{API Reference}}
+\fancyfoot[C]{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+% ── Callout boxes ──────────────────────────────────────────────
+\newtcolorbox{notebox}{
+  colback=blue!5, colframe=fridaybrand, title=Note,
+  fonttitle=\bfseries, arc=2mm
+}
+\newtcolorbox{warningbox}{
+  colback=red!5, colframe=red!60!black, title=Warning,
+  fonttitle=\bfseries, arc=2mm
+}
+
+% ── HTTP method badges ─────────────────────────────────────────
+\newcommand{\httpget}{\textcolor{getgreen}{\textbf{GET}}}
+\newcommand{\httppost}{\textcolor{postorange}{\textbf{POST}}}
+
+% ══════════════════════════════════════════════════════════════
+\begin{document}
+
+\begin{titlepage}
+\centering
+\vspace*{3cm}
+{\Huge\bfseries\color{fridaybrand} Project Friday\par}
+\vspace{0.6cm}
+{\Large API Reference\par}
+\vspace{1.5cm}
+{\large Backend REST endpoints, SSE event protocol,\\tool specifications, and configuration reference.\par}
+\vspace{2cm}
+{\normalsize Version 0.2.0\par}
+{\normalsize \today\par}
+\vfill
+\end{titlepage}
+
+\tableofcontents
+\newpage
+
+% ══════════════════════════════════════════════════════════════
+\section{Backend REST API}
+
+Base URL: \texttt{http://localhost:8000}
+
+% ── POST /chat ─────────────────────────────────────────────────
+\subsection{\httppost{} /chat}
+
+Sends a user query to the Friday agent and streams the response as Server-Sent Events (SSE).
+
+\subsubsection{Request}
+
+\begin{lstlisting}[language=json,title={Request body}]
+{
+  "query": "Create a Next.js project called Gargantua",
+  "conversation_id": "optional-uuid"
+}
+\end{lstlisting}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Required} & \textbf{Description} \\
+\midrule
+\texttt{query} & string & Yes & The user's message \\
+\texttt{conversation\_id} & string & No & UUID to continue a conversation. Auto-generated if omitted. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Response}
+
+Content-Type: \texttt{text/event-stream}
+
+Each SSE frame has the format:
+
+\begin{lstlisting}[language=json,title={SSE data frame}]
+data: {"type": "thought|tool_call|tool_result|final", "content": "..."}
+\end{lstlisting}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Event Type} & \textbf{Description} \\
+\midrule
+\texttt{thought} & Internal reasoning step from the LLM (before tool calls) \\
+\texttt{tool\_call} & Tool being invoked: ``\texttt{tool\_name \{args\_json\}}'' \\
+\texttt{tool\_result} & Tool output: ``\texttt{[tool\_name] output text}'' \\
+\texttt{final} & Agent's final answer to the user \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsubsection{Error Handling}
+
+If the agent encounters a fatal error, a final SSE frame is sent:
+
+\begin{lstlisting}[language=json]
+data: {"type": "final", "content": "Friday failed: <error message>"}
+\end{lstlisting}
+
+% ── GET /workspace ─────────────────────────────────────────────
+\subsection{\httpget{} /workspace}
+
+Returns a recursive file tree of the sandboxed workspace directory.
+
+\subsubsection{Response}
+
+\begin{lstlisting}[language=json,title={Response body}]
+{
+  "tree": [
+    {
+      "name": "src",
+      "path": "src",
+      "type": "directory",
+      "children": [
+        {"name": "index.ts", "path": "src/index.ts", "type": "file"}
+      ]
+    },
+    {"name": "package.json", "path": "package.json", "type": "file"}
+  ]
+}
+\end{lstlisting}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}llp{7cm}@{}}
+\toprule
+\textbf{Field} & \textbf{Type} & \textbf{Description} \\
+\midrule
+\texttt{name} & string & File or directory name \\
+\texttt{path} & string & Workspace-relative path (forward slashes) \\
+\texttt{type} & string & \texttt{"file"} or \texttt{"directory"} \\
+\texttt{children} & array & Nested entries (directories only) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ── GET /skills ────────────────────────────────────────────────
+\subsection{\httpget{} /skills}
+
+Returns all committed skill scripts from the library.
+
+\begin{lstlisting}[language=json,title={Response body}]
+{
+  "skills": [
+    {
+      "name": "hn_scraper",
+      "description": "Scrapes Hacker News front page",
+      "path": "skills/hn_scraper.py"
+    }
+  ]
+}
+\end{lstlisting}
+
+% ── GET /agents ────────────────────────────────────────────────
+\subsection{\httpget{} /agents}
+
+Returns all registered Skill Agents.
+
+\begin{lstlisting}[language=json,title={Response body}]
+{
+  "agents": [
+    {
+      "name": "nextjs",
+      "context_preview": "## Skill Agent: Next.js\n**Description:** ..."
+    }
+  ]
+}
+\end{lstlisting}
+
+% ══════════════════════════════════════════════════════════════
+\section{Frontend Proxy Routes}
+
+The Next.js frontend proxies all backend requests through \texttt{/api/friday/*} to avoid CORS issues.
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}llll@{}}
+\toprule
+\textbf{Method} & \textbf{Frontend Path} & \textbf{Backend Path} & \textbf{Description} \\
+\midrule
+POST & \texttt{/api/friday} & \texttt{/chat} & Chat SSE stream \\
+GET & \texttt{/api/friday} & \texttt{/workspace} & File tree \\
+GET & \texttt{/api/friday/skills} & \texttt{/skills} & Skill scripts \\
+GET & \texttt{/api/friday/agents} & \texttt{/agents} & Skill Agents \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ══════════════════════════════════════════════════════════════
+\section{Tool Specifications}
+
+\subsection{File Operations}
+
+\subsubsection{list\_files}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Arg} & \texttt{directory: str = "."} --- workspace-relative path \\
+\textbf{Returns} & Newline-separated list of entries, or \texttt{(empty directory)} \\
+\end{tabular}
+
+\subsubsection{read\_file}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Arg} & \texttt{filename: str} --- workspace-relative file path \\
+\textbf{Returns} & Full file contents as string \\
+\end{tabular}
+
+\subsubsection{write\_to\_file}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & \texttt{filename: str}, \texttt{content: str} \\
+\textbf{Returns} & ``Wrote N chars to filename'' \\
+\textbf{Note} & Creates parent directories automatically \\
+\end{tabular}
+
+\subsubsection{append\_to\_file}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & \texttt{filename: str}, \texttt{content: str} \\
+\textbf{Returns} & ``Appended N chars to filename'' \\
+\end{tabular}
+
+\subsubsection{create\_directory}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Arg} & \texttt{directory: str} --- workspace-relative path \\
+\textbf{Returns} & ``Directory created: dirname'' \\
+\end{tabular}
+
+\subsubsection{delete\_file}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Arg} & \texttt{filename: str} --- workspace-relative file path \\
+\textbf{Returns} & ``Deleted: filename'' or error message \\
+\textbf{Note} & Only deletes files, not directories \\
+\end{tabular}
+
+\subsection{Shell Execution}
+
+\subsubsection{execute\_bash\_command}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Arg} & \texttt{command: str} --- shell command to run \\
+\textbf{CWD} & \texttt{WORKSPACE\_DIR} \\
+\textbf{Timeout} & \texttt{COMMAND\_TIMEOUT} (default 120s) \\
+\textbf{Validation} & First token must be on allowlist; no chaining operators \\
+\textbf{Returns} & stdout on success, \texttt{ERROR: ...} on failure or block \\
+\end{tabular}
+
+\subsubsection{execute\_in\_directory}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & \texttt{directory: str} (absolute path), \texttt{command: str} \\
+\textbf{Validation} & Directory must be under \texttt{ALLOWED\_TARGET\_DIRS}; command must be on allowlist \\
+\textbf{Returns} & Same as \texttt{execute\_bash\_command} \\
+\end{tabular}
+
+\subsection{Web Search}
+
+\subsubsection{web\_search}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Arg} & \texttt{query: str} --- search query \\
+\textbf{Provider} & Tavily (if \texttt{TAVILY\_API\_KEY} set), else DuckDuckGo \\
+\textbf{Returns} & Top 3 result summaries joined by blank lines \\
+\end{tabular}
+
+\subsection{Skill Library}
+
+\subsubsection{save\_to\_skill\_library}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & \texttt{skill\_name: str}, \texttt{description: str}, \texttt{temp\_filename: str} \\
+\textbf{Action} & Moves workspace file to \texttt{skills/<slug>.py}, updates \texttt{index.json} \\
+\textbf{Returns} & ``Skill 'name' committed to library.'' \\
+\end{tabular}
+
+\subsubsection{search\_skill\_library}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Arg} & \texttt{query: str} --- description to match against \\
+\textbf{Returns} & JSON with \texttt{name}, \texttt{description}, \texttt{path}, \texttt{similarity} \\
+\end{tabular}
+
+\subsection{Skill Agents}
+
+\subsubsection{create\_skill\_agent}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & \texttt{framework\_name}, \texttt{description}, \texttt{dos} (newline-separated), \texttt{donts} (newline-separated), \texttt{scaffold\_steps} (newline-separated), \texttt{trigger\_patterns} (comma-separated) \\
+\textbf{Action} & Creates \texttt{skills/agents/<slug>/} with \texttt{manifest.json}, \texttt{style\_guide.md}, \texttt{templates/} \\
+\textbf{Returns} & Summary of created agent \\
+\end{tabular}
+
+\subsubsection{load\_skill\_context}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Arg} & \texttt{skill\_name: str} \\
+\textbf{Returns} & Text block with dos, don'ts, scaffold steps, and full style guide \\
+\end{tabular}
+
+\subsubsection{list\_skill\_agents}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & None \\
+\textbf{Returns} & Formatted list of all registered agents \\
+\end{tabular}
+
+\subsubsection{update\_skill\_agent}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & \texttt{skill\_name: str}, \texttt{updates: str} (JSON) \\
+\textbf{JSON keys} & \texttt{add\_dos}, \texttt{add\_donts}, \texttt{remove\_dos}, \texttt{remove\_donts}, \texttt{add\_scaffold\_steps}, \texttt{description} \\
+\textbf{Returns} & Summary of updated counts \\
+\end{tabular}
+
+% ══════════════════════════════════════════════════════════════
+\section{Configuration Reference}
+
+\begin{longtable}{@{}llp{6cm}@{}}
+\toprule
+\textbf{Variable} & \textbf{Default} & \textbf{Description} \\
+\midrule
+\endhead
+\texttt{MODEL\_PROVIDER} & \texttt{lmstudio} & LLM provider: \texttt{lmstudio}, \texttt{groq}, \texttt{ollama} \\
+\texttt{LMSTUDIO\_BASE\_URL} & \texttt{http://localhost:1234/v1} & LM Studio API endpoint \\
+\texttt{LMSTUDIO\_MODEL} & \texttt{local-model} & Requested model (auto-detected if \texttt{LMSTUDIO\_AUTO\_SELECT=true}) \\
+\texttt{LMSTUDIO\_API\_KEY} & \texttt{lm-studio} & API key for LM Studio \\
+\texttt{LMSTUDIO\_TEMPERATURE} & \texttt{0.7} & Sampling temperature \\
+\texttt{LMSTUDIO\_AUTO\_SELECT} & \texttt{true} & Auto-detect loaded model \\
+\texttt{GROQ\_API\_KEY} & (empty) & Groq cloud API key \\
+\texttt{GROQ\_MODEL} & \texttt{llama-3.3-70b-versatile} & Groq model name \\
+\texttt{OLLAMA\_MODEL} & \texttt{qwen2.5-coder:7b} & Ollama model name \\
+\texttt{MAX\_TOKENS} & \texttt{2048} & Max tokens per LLM response \\
+\texttt{TAVILY\_API\_KEY} & (empty) & Tavily web search API key \\
+\texttt{WORKSPACE\_DIR} & \texttt{./workspace} & Sandboxed file-system root \\
+\texttt{SKILLS\_DIR} & \texttt{./skills} & Skill library directory \\
+\texttt{MAX\_TOOL\_ATTEMPTS} & \texttt{3} & Retry budget for failed tools \\
+\texttt{RECURSION\_LIMIT} & \texttt{25} & LangGraph recursion hard cap \\
+\texttt{COMMAND\_TIMEOUT} & \texttt{120} & Max subprocess runtime (seconds) \\
+\texttt{COMMAND\_ALLOWLIST} & \texttt{python,npm,...} & Allowed command prefixes (comma-separated) \\
+\texttt{ALLOWED\_TARGET\_DIRS} & (empty) & Directories for external scaffolding (comma-separated absolute paths) \\
+\texttt{NEXTJS\_ORIGIN} & \texttt{http://localhost:3000} & Frontend origin for CORS \\
+\texttt{FRIDAY\_BACKEND\_URL} & \texttt{http://localhost:8000} & Backend URL (used by frontend proxy) \\
+\bottomrule
+\end{longtable}
+
+% ══════════════════════════════════════════════════════════════
+\section{Error Codes \& Responses}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}llp{7cm}@{}}
+\toprule
+\textbf{Scenario} & \textbf{Response} & \textbf{Details} \\
+\midrule
+Path escape attempt & \texttt{PermissionError} & ``Path escape attempt blocked.'' \\
+Absolute path in workspace & \texttt{PermissionError} & ``Absolute paths are not allowed.'' \\
+Symlink to external path & \texttt{PermissionError} & ``Symbolic link target is outside the workspace.'' \\
+Blocked path segment & \texttt{PermissionError} & ``Access to protected path segment blocked.'' \\
+Command not on allowlist & \texttt{BLOCKED:} string & Lists the command and allowed alternatives \\
+Shell chaining detected & \texttt{BLOCKED:} string & ``Shell operator 'X' is not allowed.'' \\
+Command timeout & \texttt{ERROR:} string & ``Command timed out after Ns.'' \\
+External dir not allowed & \texttt{BLOCKED:} string & Lists allowed target directories \\
+Backend unreachable & HTTP 502 & Frontend proxy returns error JSON \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\end{document}
