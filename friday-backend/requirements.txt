@@ -11,3 +11,4 @@ python-dotenv==1.0.1
 pydantic==2.10.6
 tavily-python==0.5.1
 duckduckgo-search==7.3.2
+yfinance==0.2.59

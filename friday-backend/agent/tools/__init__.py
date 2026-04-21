@@ -16,6 +16,7 @@ from agent.tools.os_tools import (
     read_file,
     write_to_file,
 )
+from agent.tools.market_data import compare_stock_prices, get_stock_quote
 from agent.tools.skill_agent import (
     create_skill_agent,
     list_skill_agents,
@@ -48,6 +49,9 @@ def get_registered_tools() -> list:
     static_tools = [
         # Web
         web_search,
+        # Market data
+        get_stock_quote,
+        compare_stock_prices,
         # File operations
         list_files,
         read_file,
