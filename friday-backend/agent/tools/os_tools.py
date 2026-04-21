@@ -51,6 +51,13 @@ COMMAND_ALLOWLIST: list[str] = [
     if p.strip()
 ]
 
+#: Command prefixes that are explicitly blocked even if allowlisted.
+COMMAND_DENYLIST: list[str] = [
+    p.strip().lower()
+    for p in os.getenv("COMMAND_DENYLIST", "curl,wget").split(",")
+    if p.strip()
+]
+
 # ---------------------------------------------------------------------------
 # Path safety helpers
 # ---------------------------------------------------------------------------
@@ -153,6 +160,12 @@ def _is_command_allowed(command: str) -> tuple[bool, str]:
     # Strip common path prefixes so "python3", "./node_modules/.bin/tsc" etc.
     # still match the allowlist.
     first_token_base = os.path.basename(first_token).removesuffix(".exe")
+
+    if first_token_base in COMMAND_DENYLIST:
+        return False, (
+            f"Command '{first_token}' is blocked by policy. "
+            "Use dedicated data tools (for example market/web tools) instead of raw network shell calls."
+        )
 
     if first_token_base in COMMAND_ALLOWLIST:
         return True, ""

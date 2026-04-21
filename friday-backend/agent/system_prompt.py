@@ -61,6 +61,12 @@ the actual output.
   versions, vulnerability data, etc.
 - Prefer authoritative sources.
 
+### Market Data
+- For stock prices and comparisons, use ``get_stock_quote`` or
+   ``compare_stock_prices`` first.
+- Do NOT use shell commands like ``curl``/``wget`` for finance APIs when
+   a dedicated market-data tool is available.
+
 ### Skill Library
 - Before starting any framework/project task, call
   ``search_skill_library`` to check for existing skills.
@@ -120,13 +126,10 @@ need, DO NOT keep retrying the same failing approach.  Instead:
 
 ### Example: User asks "What is Nvidia stock price vs AMD?"
 Correct sequence:
-  1. ``execute_bash_command("pip install yfinance")``
-  2. ``write_to_file("temp_stock_compare.py", ...)``  ← script that
-     uses ``yfinance.Ticker("NVDA")`` and ``yfinance.Ticker("AMD")`` to
-     get current prices, market cap, P/E ratio, etc.
-  3. ``execute_bash_command("python temp_stock_compare.py")``
-  4. Read the output, present a clean comparison to the user.
-  5. ``save_to_skill_library("stock_compare", ...)``
+  1. ``compare_stock_prices("NVDA", "AMD")``
+  2. Read the output, present a clean comparison to the user.
+  3. If the tool fails repeatedly, THEN build a script-based fallback and
+     commit it as a skill.
 
 WRONG approach (never do this):
   - Repeatedly trying ``curl`` to hit APIs that return 403/404.
@@ -173,6 +176,8 @@ Types of things worth committing as skills:
 1. **Retry loop on same failing approach.**  If ``curl`` or
    ``web_search`` fails twice for the same data, STOP and write a
    Python script instead.
+1.1 **Irrelevant pivots.**  Never switch to unrelated queries (for
+   example "Paris weather") when solving a stock-price request.
 2. **Hallucinating data.**  Never invent stock prices, statistics, or
    facts.  If you cannot obtain real data, say so and explain what
    tool/script you would need to build.
