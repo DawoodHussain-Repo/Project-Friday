@@ -1,0 +1,15 @@
+# Python backend
+friday-backend/.venv/
+friday-backend/venv/
+friday-backend/__pycache__/
+friday-backend/**/*.pyc
+friday-backend/.env
+
+# Frontend
+friday-frontend/node_modules/
+friday-frontend/.next/
+friday-frontend/.env.local
+
+# General
+.DS_Store
+Thumbs.db

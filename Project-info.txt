@@ -1,0 +1,476 @@
+# Project Friday — Technical Specification
+
+> **Tagline:** A self-improving, tool-using AI agent with a ReAct brain, sandboxed OS hands, and a growing skill library.
+
+---
+
+## 1. Vision & Scope
+
+Friday is a personal agentic AI assistant that reasons over a set of tools to complete tasks — from fetching recent CVEs to scaffolding a Next.js component. It operates on a **ReAct loop** (Reason → Act → Observe → Reason again) rather than a linear pipeline, which means it genuinely decides what to do next instead of following a hardcoded flow.
+
+The project is structured in **three phases** with a real learning curve at each step:
+
+| Phase | Capability | Learning Unlock |
+|---|---|---|
+| Day 1–2 | ReAct loop + basic tools | LangGraph cyclic graphs, conditional edges |
+| Day 3–4 | OS tools + agentic IDE | Sandboxed subprocess execution, state management |
+| Day 5+ | Self-improving skill library | RAG over skills, dynamic tool registration, Voyager pattern |
+
+---
+
+## 2. System Architecture
+
+```
+┌──────────────────────────────────────────────────────────┐
+│                     Next.js Frontend                      │
+│  Chat UI  ──SSE Stream──▶  /api/friday  (route handler)  │
+└──────────────────────────┬───────────────────────────────┘
+                           │ HTTP POST
+┌──────────────────────────▼───────────────────────────────┐
+│                   FastAPI Backend                          │
+│  POST /chat  ──▶  LangGraph executor  ──SSE──▶  client   │
+│  GET  /workspace  ──▶  file tree snapshot                 │
+│  GET  /skills     ──▶  registered skill index             │
+└──────────────────────────┬───────────────────────────────┘
+                           │
+┌──────────────────────────▼───────────────────────────────┐
+│                  LangGraph State Machine                   │
+│                                                            │
+│   ┌──────────┐    tool_call?    ┌──────────────────────┐  │
+│   │  Agent   │ ───── YES ─────▶ │   Tool Executor      │  │
+│   │  Node    │ ◀────────────── │   Node               │  │
+│   │ (LLM)   │                  └──────────────────────┘  │
+│   └────┬─────┘                                            │
+│        │ NO (final answer)                                 │
+│        ▼                                                   │
+│      END                                                   │
+└──────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 3. Backend: FastAPI
+
+### 3.1 Project Structure
+
+```
+friday-backend/
+├── main.py                  # FastAPI app, routes
+├── agent/
+│   ├── graph.py             # LangGraph StateGraph definition
+│   ├── state.py             # AgentState TypedDict
+│   ├── nodes.py             # agent_node, tool_node, router
+│   └── tools/
+│       ├── __init__.py      # tool registry
+│       ├── web_search.py    # Tavily / DuckDuckGo
+│       ├── os_tools.py      # read/write/execute (sandboxed)
+│       ├── mcp_client.py    # MCP tool wrappers
+│       └── skill_library.py # save_to_skill_library, load_skills
+├── workspace/               # WORKSPACE_DIR (sandboxed FS)
+├── skills/                  # committed skill scripts
+│   └── index.json           # skill registry for RAG lookup
+├── requirements.txt
+└── .env
+```
+
+### 3.2 Core Routes
+
+```python
+POST /chat
+  Body: { "query": str, "conversation_id": str? }
+  Response: text/event-stream (SSE)
+  Streams: { "type": "thought"|"tool_call"|"tool_result"|"final", "content": str }
+
+GET /workspace
+  Response: { "tree": [...] }  # recursive file listing
+
+GET /skills
+  Response: { "skills": [{ "name": str, "description": str, "path": str }] }
+```
+
+### 3.3 SSE Streaming Pattern
+
+```python
+from fastapi.responses import StreamingResponse
+
+async def event_stream(query: str):
+    async for event in graph.astream({"messages": [HumanMessage(query)]}):
+        yield f"data: {json.dumps(event)}\n\n"
+
+@app.post("/chat")
+async def chat(body: ChatRequest):
+    return StreamingResponse(event_stream(body.query), media_type="text/event-stream")
+```
+
+---
+
+## 4. LangGraph: The Brain
+
+### 4.1 State Definition
+
+```python
+# agent/state.py
+from typing import TypedDict, Annotated
+from langgraph.graph.message import add_messages
+
+class AgentState(TypedDict):
+    messages: Annotated[list, add_messages]
+    tool_attempts: int          # tracks retry count for self-healing loop
+    active_skill: str | None    # currently executing skill script path
+```
+
+### 4.2 Graph Structure
+
+```python
+# agent/graph.py
+from langgraph.graph import StateGraph, END
+from langgraph.prebuilt import ToolNode
+
+builder = StateGraph(AgentState)
+
+builder.add_node("agent", agent_node)
+builder.add_node("tools", ToolNode(tools))
+
+builder.set_entry_point("agent")
+
+builder.add_conditional_edges(
+    "agent",
+    router,                  # returns "tools" or END
+    { "tools": "tools", END: END }
+)
+
+builder.add_edge("tools", "agent")   # loop back after tool execution
+
+graph = builder.compile(
+    checkpointer=MemorySaver(),
+    recursion_limit=25       # hard cap, prevents infinite burn
+)
+```
+
+### 4.3 Router Logic
+
+```python
+def router(state: AgentState) -> str:
+    last_message = state["messages"][-1]
+    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        return "tools"
+    return END
+```
+
+### 4.4 Agent Node
+
+```python
+def agent_node(state: AgentState) -> dict:
+    llm_with_tools = llm.bind_tools(get_registered_tools())
+    response = llm_with_tools.invoke(state["messages"])
+    return { "messages": [response] }
+```
+
+`get_registered_tools()` returns the static core tools **plus** any dynamically loaded skills from `skills/index.json` — this is how self-improvement manifests at runtime.
+
+---
+
+## 5. Tools: The Hands
+
+### 5.1 Sandboxing Rule
+
+Every OS tool enforces a single invariant:
+
+```python
+WORKSPACE_DIR = os.path.abspath("./workspace")
+
+def safe_path(relative: str) -> str:
+    resolved = os.path.realpath(os.path.join(WORKSPACE_DIR, relative))
+    if not resolved.startswith(WORKSPACE_DIR):
+        raise PermissionError("Path escape attempt blocked.")
+    return resolved
+```
+
+Any path that tries to escape `WORKSPACE_DIR` via `../../` or absolute paths is rejected immediately.
+
+### 5.2 OS Tools (Phase 1–2)
+
+```python
+@tool
+def list_files(directory: str = ".") -> str:
+    """Lists files and folders at the given path within the workspace."""
+    return str(os.listdir(safe_path(directory)))
+
+@tool
+def read_file(filename: str) -> str:
+    """Reads and returns the contents of a file in the workspace."""
+    with open(safe_path(filename), "r") as f:
+        return f.read()
+
+@tool
+def write_to_file(filename: str, content: str) -> str:
+    """Creates or overwrites a file in the workspace with the given content."""
+    path = safe_path(filename)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(content)
+    return f"Wrote {len(content)} chars to {filename}"
+
+@tool
+def execute_bash_command(command: str) -> str:
+    """Runs a shell command inside the workspace. Returns stdout or stderr."""
+    result = subprocess.run(
+        command, shell=True,
+        cwd=WORKSPACE_DIR,
+        capture_output=True, text=True, timeout=15
+    )
+    return result.stdout if result.returncode == 0 else f"ERROR:\n{result.stderr}"
+```
+
+### 5.3 Web Search Tool (Phase 1)
+
+```python
+@tool
+def web_search(query: str) -> str:
+    """Searches the web for real-time information. Returns a summary of top results."""
+    # Use Tavily client or DuckDuckGo API
+    results = tavily.search(query=query, max_results=3)
+    return "\n\n".join([r["content"] for r in results["results"]])
+```
+
+### 5.4 Skill Library Tools (Phase 3)
+
+```python
+@tool
+def save_to_skill_library(skill_name: str, description: str, temp_filename: str) -> str:
+    """
+    Moves a successfully tested script from the workspace into the skills directory
+    and registers it in the skill index. Call this only after execute_bash_command
+    confirms the script runs without errors.
+    """
+    src = safe_path(temp_filename)
+    dest = os.path.join(SKILLS_DIR, f"{skill_name}.py")
+    shutil.move(src, dest)
+    
+    index = load_skill_index()
+    index[skill_name] = {
+        "description": description,
+        "path": dest,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    save_skill_index(index)
+    return f"Skill '{skill_name}' committed to library."
+
+@tool  
+def search_skill_library(query: str) -> str:
+    """
+    Searches the skill library using semantic similarity to find relevant existing scripts.
+    Returns the file path if a match is found.
+    """
+    # Embed query, compare against embedded skill descriptions
+    # Returns closest match above similarity threshold
+    ...
+```
+
+---
+
+## 6. Self-Improving Loop (Phase 3 — Voyager Pattern)
+
+When the agent receives a task it has no existing tool for:
+
+```
+User: "Scrape the Hacker News front page"
+
+1. PLANNER:   Agent checks skill library → no scraper found
+2. CODER:     Agent generates Python scraper using requests + BeautifulSoup
+              → write_to_file("temp_hn_scraper.py", <generated code>)
+3. TESTER:    execute_bash_command("python temp_hn_scraper.py")
+              If FAIL → agent reads traceback, rewrites, retries (max 3x)
+              If PASS → proceed
+4. COMMITTER: save_to_skill_library("hn_scraper", "Scrapes HN front page", "temp_hn_scraper.py")
+5. EXECUTOR:  Future tasks retrieve this skill via search_skill_library()
+              and run it via execute_bash_command
+```
+
+### 6.1 Retry Sub-Graph
+
+```python
+# The testing node is its own mini-loop with a hard limit
+MAX_TOOL_ATTEMPTS = 3
+
+def should_retry(state: AgentState) -> str:
+    if state["tool_attempts"] >= MAX_TOOL_ATTEMPTS:
+        return "human_fallback"   # halts, asks user
+    return "coder"                # rewrite and try again
+```
+
+### 6.2 Skill Index Format
+
+```json
+// skills/index.json
+{
+  "hn_scraper": {
+    "description": "Scrapes the Hacker News front page and returns top 10 stories",
+    "path": "./skills/hn_scraper.py",
+    "created_at": "2025-01-15T14:32:00Z",
+    "embedding_id": "vec_abc123"
+  }
+}
+```
+
+The index is re-loaded on every `agent_node` call so newly committed skills are immediately available.
+
+---
+
+## 7. Frontend: Next.js
+
+### 7.1 Project Structure
+
+```
+friday-frontend/
+├── app/
+│   ├── page.tsx             # root — renders <FridayChat />
+│   ├── api/friday/route.ts  # proxies to FastAPI (handles CORS, adds headers)
+│   └── layout.tsx
+├── components/
+│   ├── FridayChat.tsx       # main chat container
+│   ├── MessageBubble.tsx    # renders user / assistant messages
+│   ├── ThinkingIndicator.tsx # shows "Searching web..." / "Writing file..."
+│   └── WorkspacePanel.tsx   # live file tree sidebar (optional)
+├── hooks/
+│   └── useFridayStream.ts   # SSE consumer hook
+└── lib/
+    └── api.ts               # typed API client
+```
+
+### 7.2 SSE Hook
+
+```typescript
+// hooks/useFridayStream.ts
+export function useFridayStream() {
+  const [events, setEvents] = useState<FridayEvent[]>([]);
+
+  const send = async (query: string) => {
+    const res = await fetch("/api/friday", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+      headers: { "Content-Type": "application/json" }
+    });
+
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value);
+      const lines = chunk.split("\n").filter(l => l.startsWith("data:"));
+      for (const line of lines) {
+        const event: FridayEvent = JSON.parse(line.slice(5));
+        setEvents(prev => [...prev, event]);
+      }
+    }
+  };
+
+  return { events, send };
+}
+```
+
+### 7.3 Event Types & UI Mapping
+
+| Event type | What it means | UI display |
+|---|---|---|
+| `thought` | LLM internal reasoning step | Dimmed italic text, collapsible |
+| `tool_call` | Tool being invoked | Pill badge: "Searching web…" |
+| `tool_result` | Tool returned data | Collapsible code block |
+| `final` | Agent's final answer | Full message bubble |
+
+---
+
+## 8. Model Selection
+
+| Provider | Model | Use case |
+|---|---|---|
+| Google | `gemini-2.0-flash` | Default — fast, good tool calling, free tier |
+| Groq | `llama-3.3-70b-versatile` | Speed-optimized fallback |
+| Ollama (local) | `qwen2.5-coder:7b` | Offline / code generation tasks |
+
+The model must natively support **parallel tool calling** for the ReAct loop to work properly. Verify with `llm.bind_tools([...])` — if it raises, the model doesn't support it.
+
+---
+
+## 9. Security Constraints
+
+| Risk | Mitigation |
+|---|---|
+| Path traversal | `safe_path()` enforces `WORKSPACE_DIR` prefix on every OS tool call |
+| Infinite retry loops | `recursion_limit=25` on graph compile + `MAX_TOOL_ATTEMPTS=3` on skill testing sub-loop |
+| Runaway API spend | Set `max_tokens=2048` per LLM call; add token usage tracking to state |
+| Destructive bash commands | Blocklist: `rm -rf /`, `sudo`, `chmod 777` — reject in `execute_bash_command` before subprocess |
+| Secret exfiltration | `.env` and `~/.ssh` paths explicitly blocked in `safe_path()` denylist |
+
+---
+
+## 10. Environment Variables
+
+```bash
+# .env
+GOOGLE_API_KEY=...          # Gemini
+GROQ_API_KEY=...            # Groq fallback
+TAVILY_API_KEY=...          # Web search
+WORKSPACE_DIR=./workspace   # sandboxed FS root
+SKILLS_DIR=./skills         # skill library
+MAX_TOOL_ATTEMPTS=3         # retry cap for skill testing loop
+RECURSION_LIMIT=25          # LangGraph hard cap
+```
+
+---
+
+## 11. Build Phases & Milestones
+
+### Phase 1 — Naked Brain (Day 1–2)
+Terminal only. No UI.
+
+- [ ] Set up FastAPI + LangGraph project skeleton
+- [ ] Implement `web_search` tool
+- [ ] Implement dummy "doc fetcher" tool (returns hardcoded JSON)
+- [ ] Wire LangGraph ReAct loop: Agent Node → conditional edge → Tool Node → back
+- [ ] Terminal test: *"What is 500 × 4 and what's the latest Vercel vulnerability?"*
+- [ ] ✅ Friday pauses, calls both tools, synthesizes a final answer
+
+### Phase 2 — Agentic IDE (Day 3–4)
+OS tools. Sandboxed workspace. FastAPI streaming.
+
+- [ ] Implement `list_files`, `read_file`, `write_to_file`, `execute_bash_command`
+- [ ] Add `safe_path()` sandbox enforcement
+- [ ] Add bash command blocklist
+- [ ] Add SSE streaming endpoint to FastAPI
+- [ ] Terminal test: *"Create a Python script that prints 'Hello World', run it, show me the output"*
+- [ ] ✅ Friday writes `test.py`, executes it, returns `Hello World`
+
+### Phase 3 — Self-Improving Library (Day 5+)
+Voyager pattern. Dynamic skill registration.
+
+- [ ] Implement `save_to_skill_library` and `search_skill_library`
+- [ ] Set up `skills/index.json` with embedding-based lookup (LanceDB or Chroma)
+- [ ] Add retry sub-loop with `MAX_TOOL_ATTEMPTS` cap
+- [ ] Modify `agent_node` to dynamically load registered skills at runtime
+- [ ] Test: *"Scrape Hacker News"* — agent should write, test, commit, and use a scraper
+- [ ] ✅ Second run of same task uses committed skill without rewriting it
+
+### Phase 4 — UI (Day 6+)
+Next.js chat interface.
+
+- [ ] Build `FridayChat` component with SSE hook
+- [ ] Show `tool_call` events as inline pills ("Searching web…")
+- [ ] Add `WorkspacePanel` sidebar with live file tree
+- [ ] CORS config on FastAPI for Next.js origin
+
+---
+
+## 12. Complexity Calibration
+
+**Do not build Phase 4 until Phase 2 works in the terminal.**
+
+The CORS + WebSocket debugging will kill momentum. The ReAct loop is the core insight — everything else is plumbing. Get the loop working first, see Friday reason, then layer UI on top.
+
+The self-improving library (Phase 3) is the portfolio differentiator. A system that **writes its own tools** is what gets you out of junior roles. But it's impossible if the basic Read/Write/Execute loop doesn't exist yet.
+
+---
+
+*Stack: Python 3.11+ · FastAPI · LangGraph · LangChain · Next.js 15 · React 19 · TypeScript*
