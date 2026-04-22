@@ -1,1 +1,9 @@
-{}
+{
+  "web_design": {
+    "description": "Guidelines and best practices for creating HTML pages with CSS styling, including responsive design, color schemes, and common patterns",
+    "path": "skills/web_design_skill.md",
+    "type": "guide",
+    "tags": ["web", "css", "html", "design", "frontend", "styling"]
+  }
+}
+
