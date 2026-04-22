@@ -9,6 +9,7 @@ Routes
 - ``GET  /agents``     — Registered Skill Agents (framework agents).
 """
 
+import asyncio
 import json
 import os
 import uuid
@@ -21,15 +22,16 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import BaseModel
 
+load_dotenv()
+
 from agent.graph import close_graph_resources, graph
 from agent.tools.os_tools import WORKSPACE_DIR
 from agent.tools.skill_agent import get_all_skill_agent_names, load_skill_context
 from agent.tools.skill_library import load_skill_index
 
-load_dotenv()
-
 RECURSION_LIMIT: int = int(os.getenv("RECURSION_LIMIT", "25"))
 NEXTJS_ORIGIN: str = os.getenv("NEXTJS_ORIGIN", "http://localhost:3000")
+CHAT_STREAM_TIMEOUT_SECONDS: int = int(os.getenv("CHAT_STREAM_TIMEOUT_SECONDS", "180"))
 
 
 class ChatRequest(BaseModel):
@@ -114,79 +116,85 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
     }
 
     try:
-        async for update in graph.astream(
-            initial_state, config=config, stream_mode="updates"
-        ):
-            if await request.is_disconnected():
-                break
+        async with asyncio.timeout(CHAT_STREAM_TIMEOUT_SECONDS):
+            async for update in graph.astream(
+                initial_state, config=config, stream_mode="updates"
+            ):
+                if await request.is_disconnected():
+                    break
 
-            for node_name, payload in update.items():
-                if not isinstance(payload, dict):
-                    continue
-                messages = payload.get("messages", [])
-
-                if node_name == "agent" and messages:
-                    agent_message = messages[-1]
-                    text = _normalize_message_content(
-                        getattr(agent_message, "content", "")
-                    )
-                    tool_calls = getattr(agent_message, "tool_calls", []) or []
-                    message_id = str(getattr(agent_message, "id", ""))
-                    call_signature = json.dumps(
-                        tool_calls, ensure_ascii=True, default=str, sort_keys=True
-                    )
-                    agent_signature = f"{message_id}|{text}|{call_signature}"
-
-                    if agent_signature in seen_agent_signatures:
+                for node_name, payload in update.items():
+                    if not isinstance(payload, dict):
                         continue
-                    seen_agent_signatures.add(agent_signature)
+                    messages = payload.get("messages", [])
 
-                    if tool_calls:
-                        if text:
-                            yield _sse_payload("thought", str(text))
-                        for call in tool_calls:
-                            tool_name = call.get("name", "unknown_tool")
-                            args = json.dumps(
-                                call.get("args", {}), ensure_ascii=True
-                            )
-                            yield _sse_payload("tool_call", f"{tool_name} {args}")
+                    if node_name == "agent" and messages:
+                        agent_message = messages[-1]
+                        text = _normalize_message_content(
+                            getattr(agent_message, "content", "")
+                        )
+                        tool_calls = getattr(agent_message, "tool_calls", []) or []
+                        message_id = str(getattr(agent_message, "id", ""))
+                        call_signature = json.dumps(
+                            tool_calls, ensure_ascii=True, default=str, sort_keys=True
+                        )
+                        agent_signature = f"{message_id}|{text}|{call_signature}"
 
-                if node_name == "tools" and messages:
-                    for message in messages:
-                        if not isinstance(message, ToolMessage):
+                        if agent_signature in seen_agent_signatures:
                             continue
+                        seen_agent_signatures.add(agent_signature)
 
-                        tool_name = getattr(message, "name", "tool")
-                        serialized_output = _normalize_message_content(
-                            getattr(message, "content", "")
-                        )
-                        message_id = str(getattr(message, "id", ""))
-                        tool_signature = (
-                            f"{message_id}|{tool_name}|{serialized_output}"
-                        )
-
-                        if tool_signature in seen_tool_signatures:
-                            continue
-                        seen_tool_signatures.add(tool_signature)
-
-                        yield _sse_payload(
-                            "tool_result", f"[{tool_name}] {serialized_output}"
-                        )
-
-                if node_name == "validate":
-                    needs_revision = bool(payload.get("needs_revision", False))
-                    final_answer = str(payload.get("final_answer", "")).strip()
-
-                    if needs_revision:
-                        validator_messages = payload.get("messages", [])
-                        for message in validator_messages:
-                            text = _normalize_message_content(
-                                getattr(message, "content", "")
-                            ).strip()
+                        if tool_calls:
                             if text:
-                                yield _sse_payload("thought", text)
-                    elif final_answer:
-                        yield _sse_payload("final", final_answer)
+                                yield _sse_payload("thought", str(text))
+                            for call in tool_calls:
+                                tool_name = call.get("name", "unknown_tool")
+                                args = json.dumps(
+                                    call.get("args", {}), ensure_ascii=True
+                                )
+                                yield _sse_payload("tool_call", f"{tool_name} {args}")
+
+                    if node_name == "tools" and messages:
+                        for message in messages:
+                            if not isinstance(message, ToolMessage):
+                                continue
+
+                            tool_name = getattr(message, "name", "tool")
+                            serialized_output = _normalize_message_content(
+                                getattr(message, "content", "")
+                            )
+                            message_id = str(getattr(message, "id", ""))
+                            tool_signature = (
+                                f"{message_id}|{tool_name}|{serialized_output}"
+                            )
+
+                            if tool_signature in seen_tool_signatures:
+                                continue
+                            seen_tool_signatures.add(tool_signature)
+
+                            yield _sse_payload(
+                                "tool_result", f"[{tool_name}] {serialized_output}"
+                            )
+
+                    if node_name == "validate":
+                        needs_revision = bool(payload.get("needs_revision", False))
+                        final_answer = str(payload.get("final_answer", "")).strip()
+
+                        if needs_revision:
+                            validator_messages = payload.get("messages", [])
+                            for message in validator_messages:
+                                text = _normalize_message_content(
+                                    getattr(message, "content", "")
+                                ).strip()
+                                if text:
+                                    yield _sse_payload("thought", text)
+                        elif final_answer:
+                            yield _sse_payload("final", final_answer)
+    except TimeoutError:
+        yield _sse_payload(
+            "final",
+            f"Friday timed out after {CHAT_STREAM_TIMEOUT_SECONDS}s. Try a shorter request.",
+        )
     except Exception as exc:
         yield _sse_payload("final", f"Friday failed: {exc}")
 
@@ -229,7 +237,7 @@ def _build_tree(path: str, root: str) -> list[dict[str, Any]]:
 
 @app.get("/workspace")
 async def get_workspace_tree():
-    tree = _build_tree(WORKSPACE_DIR, WORKSPACE_DIR)
+    tree = await asyncio.to_thread(_build_tree, WORKSPACE_DIR, WORKSPACE_DIR)
     return {"tree": tree}
 
 
@@ -256,8 +264,14 @@ async def get_skills():
 async def get_agents():
     """Return a list of registered Skill Agents."""
     agent_names = get_all_skill_agent_names()
-    agents = []
-    for name in agent_names:
-        context = load_skill_context.invoke({"skill_name": name})
-        agents.append({"name": name, "context_preview": context[:300]})
+    contexts = await asyncio.gather(
+        *[
+            asyncio.to_thread(load_skill_context.invoke, {"skill_name": name})
+            for name in agent_names
+        ]
+    )
+    agents = [
+        {"name": name, "context_preview": str(context)[:300]}
+        for name, context in zip(agent_names, contexts, strict=False)
+    ]
     return {"agents": agents}

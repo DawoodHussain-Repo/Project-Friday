@@ -25,6 +25,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import threading
 
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -41,15 +42,16 @@ from agent.tools import get_registered_tools
 
 _cached_tool_node: ToolNode | None = None
 _cached_tools_hash: str = ""
+_tool_cache_lock = threading.Lock()
 
 
 def _tools_fingerprint(tools: list) -> str:
     """Compute a lightweight hash of tool names to detect changes."""
     names = sorted(getattr(t, "name", str(t)) for t in tools)
-    return hashlib.md5(json.dumps(names).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(names).encode()).hexdigest()
 
 
-def dynamic_tool_node(state: AgentState):
+async def dynamic_tool_node(state: AgentState):
     """Execute tool calls using the current tool set.
 
     Re-creates the ``ToolNode`` only when the set of registered tools has
@@ -60,18 +62,19 @@ def dynamic_tool_node(state: AgentState):
     tools = get_registered_tools()
     fingerprint = _tools_fingerprint(tools)
 
-    if _cached_tool_node is None or fingerprint != _cached_tools_hash:
-        _cached_tool_node = ToolNode(tools)
-        _cached_tools_hash = fingerprint
+    with _tool_cache_lock:
+        if _cached_tool_node is None or fingerprint != _cached_tools_hash:
+            _cached_tool_node = ToolNode(tools)
+            _cached_tools_hash = fingerprint
+        tool_node = _cached_tool_node
 
-    return _cached_tool_node.invoke(state)
+    return await tool_node.ainvoke(state)
 
 
 # ---------------------------------------------------------------------------
 # Build the graph
 # ---------------------------------------------------------------------------
 
-RECURSION_LIMIT: int = int(os.getenv("RECURSION_LIMIT", "25"))
 CHECKPOINTER_BACKEND: str = os.getenv("CHECKPOINTER_BACKEND", "sqlite").strip().lower()
 DEFAULT_CHECKPOINTS_DIR: str = os.path.abspath(
     os.path.join(os.path.dirname(os.path.dirname(__file__)), "checkpoints")

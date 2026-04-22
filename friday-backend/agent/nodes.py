@@ -7,9 +7,9 @@ Nodes
 - ``router`` — decides whether to call tools or validate.
 - ``validator_node`` — checks final output against minimal guardrails.
 - ``validator_router`` — decides whether to regenerate or end.
-- ``should_retry`` — decides whether to retry a failed tool execution.
 """
 
+from functools import lru_cache
 import os
 from typing import Any
 
@@ -21,11 +21,16 @@ from agent.state import AgentState
 from agent.system_prompt import build_system_prompt
 from agent.tools import get_registered_tools
 
-MAX_TOOL_ATTEMPTS: int = int(os.getenv("MAX_TOOL_ATTEMPTS", "3"))
 MAX_HISTORY_MESSAGES: int = int(os.getenv("MAX_HISTORY_MESSAGES", "12"))
 MAX_MEMORY_SUMMARY_CHARS: int = int(os.getenv("MAX_MEMORY_SUMMARY_CHARS", "1200"))
 MAX_INPUT_CHARS: int = int(os.getenv("MAX_INPUT_CHARS", "9000"))
 MAX_VALIDATION_ATTEMPTS: int = int(os.getenv("MAX_VALIDATION_ATTEMPTS", "1"))
+
+
+@lru_cache(maxsize=1)
+def _get_base_llm():
+    """Cache base model construction to avoid repeated provider setup I/O."""
+    return get_llm()
 
 
 def _message_text(message: BaseMessage) -> str:
@@ -97,7 +102,7 @@ def _is_stock_query(text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def agent_node(state: AgentState) -> dict[str, Any]:
+async def agent_node(state: AgentState) -> dict[str, Any]:
     """Invoke the LLM with the current messages, tools, and system prompt.
 
     The system prompt is assembled from the static core instructions plus
@@ -120,7 +125,7 @@ def agent_node(state: AgentState) -> dict[str, Any]:
     )
 
     tools = get_registered_tools()
-    llm_with_tools = get_llm().bind_tools(tools)
+    llm_with_tools = _get_base_llm().bind_tools(tools)
 
     # Keep bounded recent messages, then apply a strict character budget.
     bounded_history = full_history[-MAX_HISTORY_MESSAGES:]
@@ -130,7 +135,7 @@ def agent_node(state: AgentState) -> dict[str, Any]:
         bounded_history = bounded_history[1:]
         messages = [SystemMessage(content=system_prompt)] + bounded_history
 
-    response = llm_with_tools.invoke(messages)
+    response = await llm_with_tools.ainvoke(messages)
 
     return {
         "messages": [response],
@@ -153,7 +158,7 @@ def router(state: AgentState) -> str:
     ``"validate"`` to run final-answer guardrails.
     """
     last_message = state["messages"][-1]
-    if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+    if isinstance(last_message, AIMessage) and last_message.tool_calls:
         return "tools"
     return "validate"
 
@@ -217,20 +222,3 @@ def validator_router(state: AgentState) -> str:
     if state.get("needs_revision"):
         return "agent"
     return END
-
-
-# ---------------------------------------------------------------------------
-# Retry logic
-# ---------------------------------------------------------------------------
-
-
-def should_retry(state: AgentState) -> str:
-    """Decide whether to retry after a tool failure.
-
-    Returns ``"agent"`` to let the LLM try again (the error is already in
-    the message history), or ``END`` if the retry budget is exhausted.
-    """
-    attempts = state.get("tool_attempts", 0)
-    if attempts >= MAX_TOOL_ATTEMPTS:
-        return END  # bail out — the agent will explain the failure
-    return "agent"
