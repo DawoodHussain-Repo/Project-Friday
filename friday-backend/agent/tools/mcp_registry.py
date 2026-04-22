@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 import httpx
 from langchain_core.tools import StructuredTool, tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 SKILLS_DIR: str = os.path.abspath(os.getenv("SKILLS_DIR", "./skills"))
 MCP_REGISTRY_PATH: str = os.path.join(SKILLS_DIR, "mcp_tools.json")
@@ -23,6 +23,8 @@ MCP_TIMEOUT_SECONDS: int = int(os.getenv("MCP_TIMEOUT_SECONDS", "20"))
 
 
 class MCPInvokeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     payload: str = Field(
         default="{}",
         description="JSON string payload sent to the MCP/HTTP endpoint.",

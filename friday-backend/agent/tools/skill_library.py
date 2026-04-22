@@ -23,7 +23,7 @@ from difflib import SequenceMatcher
 from typing import Any, Callable
 
 from langchain_core.tools import StructuredTool, tool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent.tools.os_tools import COMMAND_TIMEOUT, WORKSPACE_DIR, safe_path
 
@@ -33,6 +33,8 @@ SKILL_INDEX_PATH: str = os.path.join(SKILLS_DIR, "index.json")
 
 class SkillRunInput(BaseModel):
     """Schema for running a committed skill script."""
+
+    model_config = ConfigDict(extra="forbid")
 
     arguments: str = Field(
         default="",
