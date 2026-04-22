@@ -1,0 +1,44 @@
+name: backend-tests
+
+on:
+  push:
+    paths:
+      - "friday-backend/**"
+      - ".github/workflows/backend-tests.yml"
+  pull_request:
+    paths:
+      - "friday-backend/**"
+      - ".github/workflows/backend-tests.yml"
+
+jobs:
+  unit-and-mocked-graph:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: friday-backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run deterministic unit tests
+        env:
+          CHECKPOINTER_BACKEND: memory
+        run: pytest -q -m unit
+
+      - name: Run mocked graph tests (no real LLM)
+        env:
+          CHECKPOINTER_BACKEND: memory
+        run: pytest -q -m mocked_graph
