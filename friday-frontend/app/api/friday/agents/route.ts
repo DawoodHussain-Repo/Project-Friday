@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.FRIDAY_BACKEND_URL ?? "http://localhost:8000";
+import { FRIDAY_BACKEND_URL } from "../../../../lib/config";
 
 export async function GET() {
-  const upstream = await fetch(`${BACKEND_URL}/agents`, {
+  const upstream = await fetch(`${FRIDAY_BACKEND_URL}/agents`, {
     method: "GET",
     cache: "no-store",
   });

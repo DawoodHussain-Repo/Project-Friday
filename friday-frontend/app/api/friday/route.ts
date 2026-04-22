@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.FRIDAY_BACKEND_URL ?? "http://localhost:8000";
+import { FRIDAY_BACKEND_URL } from "../../../lib/config";
 
 export async function POST(req: NextRequest) {
   const body = await req.text();
 
-  const upstream = await fetch(`${BACKEND_URL}/chat`, {
+  const upstream = await fetch(`${FRIDAY_BACKEND_URL}/chat`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -35,7 +35,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET() {
-  const upstream = await fetch(`${BACKEND_URL}/workspace`, {
+  const upstream = await fetch(`${FRIDAY_BACKEND_URL}/workspace`, {
     method: "GET",
     cache: "no-store",
   });
