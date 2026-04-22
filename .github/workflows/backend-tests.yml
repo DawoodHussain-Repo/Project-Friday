@@ -33,12 +33,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements-dev.txt
 
+      - name: Prepare test report directory
+        run: mkdir -p test-results
+
       - name: Run deterministic unit tests
         env:
           CHECKPOINTER_BACKEND: memory
-        run: pytest -q -m unit
+        run: pytest -q -m unit --junitxml=test-results/unit.xml --durations=20
 
       - name: Run mocked graph tests (no real LLM)
         env:
           CHECKPOINTER_BACKEND: memory
-        run: pytest -q -m mocked_graph
+        run: pytest -q -m mocked_graph --junitxml=test-results/mocked-graph.xml --durations=20
+
+      - name: Upload backend test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-reports
+          path: friday-backend/test-results/
+          if-no-files-found: warn
