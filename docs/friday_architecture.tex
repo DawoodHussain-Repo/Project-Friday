@@ -155,7 +155,7 @@ Friday is a personal agentic AI assistant that reasons over a set of tools to co
 \textbf{Component} & \textbf{Responsibility} \\
 \midrule
 \texttt{main.py} & FastAPI application, routes, SSE streaming, CORS \\
-\texttt{agent/graph.py} & LangGraph \texttt{StateGraph} definition, cached tool node \\
+\texttt{agent/graph.py} & LangGraph \texttt{StateGraph} definition, async checkpointer, cached tool node \\
 \texttt{agent/nodes.py} & Agent node (LLM invocation with system prompt), router, retry logic \\
 \texttt{agent/state.py} & \texttt{AgentState} TypedDict flowing through every node \\
 \texttt{agent/system\_prompt.py} & Friday's identity, ReAct instructions, dynamic context injection \\
@@ -596,11 +596,20 @@ Project-Friday/
 
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Semantic skill search:} Replace \texttt{SequenceMatcher} with embedding-based lookup (ChromaDB or LanceDB).
-  \item \textbf{Persistent memory:} Replace \texttt{MemorySaver} with SQLite or file-based checkpointer for conversation persistence across restarts.
   \item \textbf{Richer MCP transport:} Add full protocol-level MCP transport/session support beyond simple HTTP endpoint wrappers.
   \item \textbf{Multi-language skills:} Support non-Python skill scripts (Node.js, Bash, Go).
   \item \textbf{Container isolation:} Run tool commands in Docker containers for production-grade sandboxing.
   \item \textbf{Authentication:} Add API key or JWT-based auth for production deployments.
 \end{enumerate}
+
+\begin{notebox}
+\textbf{Recent Changes (v0.2.0):}
+\begin{itemize}[leftmargin=*]
+  \item Migrated from synchronous \texttt{SqliteSaver} to \texttt{AsyncSqliteSaver} for proper async checkpoint persistence.
+  \item Replaced \texttt{threading.Lock} with \texttt{asyncio.Lock} in the dynamic tool node cache for async-safe synchronization.
+  \item Graph initialization is now lazy via \texttt{get\_graph()} to support async checkpointer setup.
+  \item Added \texttt{aiosqlite} dependency for async SQLite operations.
+\end{itemize}
+\end{notebox}
 
 \end{document}

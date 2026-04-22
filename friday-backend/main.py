@@ -12,9 +12,11 @@ Routes
 import asyncio
 import json
 import os
+import time
 import uuid
 from typing import Any
 
+import anyio
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -24,10 +26,13 @@ from pydantic import BaseModel
 
 load_dotenv()
 
-from agent.graph import close_graph_resources, graph
+from agent.graph import close_graph_resources, get_graph
+from agent.logger import setup_logger, log_graph_event, log_performance
 from agent.tools.os_tools import WORKSPACE_DIR
 from agent.tools.skill_agent import get_all_skill_agent_names, load_skill_context
 from agent.tools.skill_library import load_skill_index
+
+logger = setup_logger(__name__)
 
 RECURSION_LIMIT: int = int(os.getenv("RECURSION_LIMIT", "25"))
 NEXTJS_ORIGIN: str = os.getenv("NEXTJS_ORIGIN", "http://localhost:3000")
@@ -45,11 +50,15 @@ app = FastAPI(
     description="A self-improving, tool-using AI agent with a ReAct brain.",
 )
 
+logger.info("Starting Project Friday API v0.2.0")
+
 
 @app.on_event("shutdown")
-def shutdown_graph_resources() -> None:
+async def shutdown_graph_resources() -> None:
     """Release persistent graph resources cleanly during server shutdown."""
-    close_graph_resources()
+    logger.info("Shutdown event triggered")
+    await close_graph_resources()
+    logger.info("Shutdown complete")
 
 app.add_middleware(
     CORSMiddleware,
@@ -95,6 +104,9 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
     thread_id = conversation_id or str(uuid.uuid4())
     seen_agent_signatures: set[str] = set()
     seen_tool_signatures: set[str] = set()
+    
+    start_time = time.time()
+    logger.info(f"Starting chat stream | thread_id={thread_id} | query_length={len(query)}")
 
     initial_state = {
         "messages": [HumanMessage(content=query)],
@@ -116,11 +128,15 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
     }
 
     try:
-        async with asyncio.timeout(CHAT_STREAM_TIMEOUT_SECONDS):
+        graph = await get_graph()
+        log_graph_event(logger, "start", "stream", thread_id, f"recursion_limit={RECURSION_LIMIT}")
+        
+        with anyio.fail_after(CHAT_STREAM_TIMEOUT_SECONDS):
             async for update in graph.astream(
                 initial_state, config=config, stream_mode="updates"
             ):
                 if await request.is_disconnected():
+                    logger.warning(f"Client disconnected | thread_id={thread_id}")
                     break
 
                 for node_name, payload in update.items():
@@ -129,6 +145,7 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
                     messages = payload.get("messages", [])
 
                     if node_name == "agent" and messages:
+                        log_graph_event(logger, "node", "agent", thread_id, f"messages={len(messages)}")
                         agent_message = messages[-1]
                         text = _normalize_message_content(
                             getattr(agent_message, "content", "")
@@ -152,9 +169,11 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
                                 args = json.dumps(
                                     call.get("args", {}), ensure_ascii=True
                                 )
+                                logger.info(f"Tool call | thread_id={thread_id} | tool={tool_name}")
                                 yield _sse_payload("tool_call", f"{tool_name} {args}")
 
                     if node_name == "tools" and messages:
+                        log_graph_event(logger, "node", "tools", thread_id, f"results={len(messages)}")
                         for message in messages:
                             if not isinstance(message, ToolMessage):
                                 continue
@@ -172,15 +191,18 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
                                 continue
                             seen_tool_signatures.add(tool_signature)
 
+                            logger.info(f"Tool result | thread_id={thread_id} | tool={tool_name} | output_length={len(serialized_output)}")
                             yield _sse_payload(
                                 "tool_result", f"[{tool_name}] {serialized_output}"
                             )
 
                     if node_name == "validate":
+                        log_graph_event(logger, "node", "validate", thread_id)
                         needs_revision = bool(payload.get("needs_revision", False))
                         final_answer = str(payload.get("final_answer", "")).strip()
 
                         if needs_revision:
+                            logger.info(f"Validation requested revision | thread_id={thread_id}")
                             validator_messages = payload.get("messages", [])
                             for message in validator_messages:
                                 text = _normalize_message_content(
@@ -189,13 +211,21 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
                                 if text:
                                     yield _sse_payload("thought", text)
                         elif final_answer:
+                            logger.info(f"Final answer generated | thread_id={thread_id} | length={len(final_answer)}")
                             yield _sse_payload("final", final_answer)
+        
+        duration_ms = (time.time() - start_time) * 1000
+        log_performance(logger, f"chat_stream[{thread_id}]", duration_ms)
+        log_graph_event(logger, "complete", "stream", thread_id, f"duration={duration_ms:.2f}ms")
+        
     except TimeoutError:
+        logger.error(f"Chat stream timeout | thread_id={thread_id} | timeout={CHAT_STREAM_TIMEOUT_SECONDS}s")
         yield _sse_payload(
             "final",
             f"Friday timed out after {CHAT_STREAM_TIMEOUT_SECONDS}s. Try a shorter request.",
         )
     except Exception as exc:
+        logger.error(f"Chat stream error | thread_id={thread_id} | error={exc}", exc_info=True)
         yield _sse_payload("final", f"Friday failed: {exc}")
 
 

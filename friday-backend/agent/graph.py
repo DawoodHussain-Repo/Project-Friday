@@ -21,20 +21,22 @@ available immediately.  A ``ToolNode`` cache avoids re-creating the
 wrapper on every invocation unless the skill index has changed.
 """
 
+import asyncio
 import hashlib
 import json
 import os
-import sqlite3
-import threading
 
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from agent.logger import setup_logger, log_checkpoint_operation
 from agent.nodes import agent_node, router, validator_node, validator_router
 from agent.state import AgentState
 from agent.tools import get_registered_tools
+
+logger = setup_logger(__name__)
 
 # ---------------------------------------------------------------------------
 # Cached dynamic tool node
@@ -42,7 +44,7 @@ from agent.tools import get_registered_tools
 
 _cached_tool_node: ToolNode | None = None
 _cached_tools_hash: str = ""
-_tool_cache_lock = threading.Lock()
+_tool_cache_lock = asyncio.Lock()
 
 
 def _tools_fingerprint(tools: list) -> str:
@@ -62,7 +64,7 @@ async def dynamic_tool_node(state: AgentState):
     tools = get_registered_tools()
     fingerprint = _tools_fingerprint(tools)
 
-    with _tool_cache_lock:
+    async with _tool_cache_lock:
         if _cached_tool_node is None or fingerprint != _cached_tools_hash:
             _cached_tool_node = ToolNode(tools)
             _cached_tools_hash = fingerprint
@@ -86,39 +88,65 @@ CHECKPOINTS_DB_PATH: str = os.path.abspath(
     os.getenv("CHECKPOINTS_DB_PATH", os.path.join(CHECKPOINTS_DIR, "friday_state.sqlite"))
 )
 
-_sqlite_connection: sqlite3.Connection | None = None
+_async_checkpointer: AsyncSqliteSaver | None = None
+_checkpointer_context = None
 
 
-def _build_checkpointer():
+async def _build_checkpointer():
     """Create the configured graph checkpointer.
 
     - ``sqlite`` (default): persists threads to a SQLite DB on disk.
     - ``memory``: ephemeral in-memory saver for test sessions.
     """
-    global _sqlite_connection  # noqa: PLW0603
+    global _async_checkpointer, _checkpointer_context  # noqa: PLW0603
+
+    logger.info(f"Initializing checkpointer backend: {CHECKPOINTER_BACKEND}")
 
     if CHECKPOINTER_BACKEND == "memory":
+        logger.info("Using in-memory checkpointer (ephemeral)")
         return MemorySaver()
 
     if CHECKPOINTER_BACKEND != "sqlite":
+        logger.error(f"Unsupported CHECKPOINTER_BACKEND: {CHECKPOINTER_BACKEND}")
         raise ValueError(
             "Unsupported CHECKPOINTER_BACKEND. Use 'sqlite' or 'memory'."
         )
 
-    os.makedirs(os.path.dirname(CHECKPOINTS_DB_PATH), exist_ok=True)
-    _sqlite_connection = sqlite3.connect(CHECKPOINTS_DB_PATH, check_same_thread=False)
-    saver = SqliteSaver(_sqlite_connection)
-    saver.setup()
-    return saver
+    try:
+        os.makedirs(os.path.dirname(CHECKPOINTS_DB_PATH), exist_ok=True)
+        logger.info(f"Initializing AsyncSqliteSaver at: {CHECKPOINTS_DB_PATH}")
+        
+        # AsyncSqliteSaver.from_conn_string returns an async context manager
+        _checkpointer_context = AsyncSqliteSaver.from_conn_string(CHECKPOINTS_DB_PATH)
+        # Enter the context manager and keep it alive
+        _async_checkpointer = await _checkpointer_context.__aenter__()
+        
+        logger.info("AsyncSqliteSaver initialized successfully")
+        log_checkpoint_operation(logger, "init", "system", success=True)
+        return _async_checkpointer
+    except Exception as e:
+        logger.error(f"Failed to initialize AsyncSqliteSaver: {e}", exc_info=True)
+        log_checkpoint_operation(logger, "init", "system", success=False)
+        raise
 
 
-def close_graph_resources() -> None:
-    """Close open graph resources (SQLite connection) on app shutdown."""
-    global _sqlite_connection  # noqa: PLW0603
+async def close_graph_resources() -> None:
+    """Close open graph resources (AsyncSqliteSaver) on app shutdown."""
+    global _async_checkpointer, _checkpointer_context  # noqa: PLW0603
 
-    if _sqlite_connection is not None:
-        _sqlite_connection.close()
-        _sqlite_connection = None
+    if _checkpointer_context is not None:
+        logger.info("Closing graph resources...")
+        # Exit the context manager properly
+        try:
+            await _checkpointer_context.__aexit__(None, None, None)
+            logger.info("Graph resources closed successfully")
+            log_checkpoint_operation(logger, "close", "system", success=True)
+        except Exception as e:
+            logger.error(f"Error closing graph resources: {e}", exc_info=True)
+            log_checkpoint_operation(logger, "close", "system", success=False)
+        finally:
+            _async_checkpointer = None
+            _checkpointer_context = None
 
 builder = StateGraph(AgentState)
 
@@ -132,7 +160,45 @@ builder.add_conditional_edges("agent", router, {"tools": "tools", "validate": "v
 builder.add_edge("tools", "agent")  # loop back after tool execution
 builder.add_conditional_edges("validate", validator_router, {"agent": "agent", END: END})
 
-graph = builder.compile(
-    checkpointer=_build_checkpointer(),
-    # recursion_limit is set per-invocation in main.py
-)
+# Compile graph without checkpointer initially (will be set lazily on first use)
+_graph_builder = builder
+_compiled_graph = None
+_graph_init_lock = asyncio.Lock()
+
+
+async def get_graph():
+    """Get or initialize the compiled graph with async checkpointer."""
+    global _compiled_graph  # noqa: PLW0603
+    
+    if _compiled_graph is not None:
+        return _compiled_graph
+    
+    async with _graph_init_lock:
+        if _compiled_graph is not None:
+            return _compiled_graph
+        
+        logger.info("Compiling LangGraph state machine...")
+        try:
+            checkpointer = await _build_checkpointer()
+            _compiled_graph = _graph_builder.compile(
+                checkpointer=checkpointer,
+                # recursion_limit is set per-invocation in main.py
+            )
+            logger.info("LangGraph compiled successfully")
+            return _compiled_graph
+        except Exception as e:
+            logger.error(f"Failed to compile graph: {e}", exc_info=True)
+            raise
+
+
+# For backward compatibility, create a synchronous wrapper that will fail with a helpful message
+class _GraphProxy:
+    """Proxy that ensures graph is accessed via get_graph() async function."""
+    
+    def __getattr__(self, name):
+        raise RuntimeError(
+            "Graph must be initialized asynchronously. Use 'await get_graph()' instead of 'graph'."
+        )
+
+
+graph = _GraphProxy()

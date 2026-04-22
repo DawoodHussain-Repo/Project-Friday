@@ -1,0 +1,32 @@
+\contentsline {section}{\numberline {1}Vision \& Scope}{2}{section.1}%
+\contentsline {subsection}{\numberline {1.1}Design Philosophy}{2}{subsection.1.1}%
+\contentsline {section}{\numberline {2}System Architecture}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Component Responsibilities}{2}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}LangGraph Node/Edge Visualization}{3}{subsection.2.2}%
+\contentsline {section}{\numberline {3}Architecture Decisions (Why)}{3}{section.3}%
+\contentsline {section}{\numberline {4}Agent State}{3}{section.4}%
+\contentsline {section}{\numberline {5}Tools}{3}{section.5}%
+\contentsline {subsection}{\numberline {5.1}File Operations}{3}{subsection.5.1}%
+\contentsline {subsection}{\numberline {5.2}Shell Execution}{3}{subsection.5.2}%
+\contentsline {subsection}{\numberline {5.3}Web Search}{5}{subsection.5.3}%
+\contentsline {subsection}{\numberline {5.4}Market Data}{5}{subsection.5.4}%
+\contentsline {subsection}{\numberline {5.5}Skill Library}{5}{subsection.5.5}%
+\contentsline {subsection}{\numberline {5.6}Skill Agents}{5}{subsection.5.6}%
+\contentsline {subsection}{\numberline {5.7}Dynamic MCP Tools}{5}{subsection.5.7}%
+\contentsline {section}{\numberline {6}Skill Agent System}{5}{section.6}%
+\contentsline {subsection}{\numberline {6.1}Directory Structure}{5}{subsection.6.1}%
+\contentsline {subsection}{\numberline {6.2}Manifest Schema}{6}{subsection.6.2}%
+\contentsline {subsection}{\numberline {6.3}Lifecycle}{6}{subsection.6.3}%
+\contentsline {section}{\numberline {7}Security Model}{7}{section.7}%
+\contentsline {subsection}{\numberline {7.1}Path Sandboxing}{7}{subsection.7.1}%
+\contentsline {subsection}{\numberline {7.2}Command Allowlist}{7}{subsection.7.2}%
+\contentsline {subsection}{\numberline {7.3}Skill Script Execution}{7}{subsection.7.3}%
+\contentsline {subsection}{\numberline {7.4}Retry \& Recursion Limits}{8}{subsection.7.4}%
+\contentsline {section}{\numberline {8}System Prompt}{8}{section.8}%
+\contentsline {section}{\numberline {9}LLM Provider Configuration}{8}{section.9}%
+\contentsline {section}{\numberline {10}Frontend Architecture}{8}{section.10}%
+\contentsline {subsection}{\numberline {10.1}Component Tree}{8}{subsection.10.1}%
+\contentsline {subsection}{\numberline {10.2}SSE Stream Hook}{9}{subsection.10.2}%
+\contentsline {subsection}{\numberline {10.3}Event Types}{9}{subsection.10.3}%
+\contentsline {section}{\numberline {11}Project Structure}{9}{section.11}%
+\contentsline {section}{\numberline {12}Future Enhancements}{10}{section.12}%

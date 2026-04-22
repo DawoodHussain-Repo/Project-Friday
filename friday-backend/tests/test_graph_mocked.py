@@ -72,7 +72,7 @@ async def test_graph_loops_through_tools_then_finishes(monkeypatch: pytest.Monke
         "final_answer": None,
     }
 
-    result = await graph_module.graph.ainvoke(
+    result = await (await graph_module.get_graph()).ainvoke(
         initial_state,
         config={"configurable": {"thread_id": "mocked-graph-tools"}, "recursion_limit": 8},
     )
@@ -126,8 +126,9 @@ async def test_graph_checkpointer_persists_thread_history(monkeypatch: pytest.Mo
         "final_answer": None,
     }
 
-    await graph_module.graph.ainvoke(first_turn, config=config)
-    result_second = await graph_module.graph.ainvoke(second_turn, config=config)
+    graph = await graph_module.get_graph()
+    await graph.ainvoke(first_turn, config=config)
+    result_second = await graph.ainvoke(second_turn, config=config)
 
     contents = [str(getattr(message, "content", "")) for message in result_second["messages"]]
     assert any("first message" in content for content in contents)

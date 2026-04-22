@@ -28,6 +28,16 @@
 - Node.js 18+
 - LM Studio **or** Groq API key **or** Ollama
 
+### ⚠️ Migration Note (v0.2.0)
+
+If upgrading from a previous version, delete the old checkpoint database to avoid compatibility issues:
+
+```powershell
+Remove-Item -Force friday-backend/checkpoints/friday_state.sqlite*
+```
+
+This is required because v0.2.0 migrated from synchronous `SqliteSaver` to async `AsyncSqliteSaver`.
+
 ### One-Command Launch
 
 ```powershell
