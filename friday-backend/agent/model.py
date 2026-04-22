@@ -47,7 +47,7 @@ def _discover_lmstudio_model(base_url: str, api_key: str, requested_model: str) 
 
 def get_local_llm(temperature: float | None = None):
     """Connects to the local LM Studio OpenAI-compatible server."""
-    max_tokens = int(os.getenv("MAX_TOKENS", "1000"))
+    max_tokens = int(os.getenv("MAX_TOKENS", "8000"))
     base_url = os.getenv("LMSTUDIO_BASE_URL", "http://localhost:1234/v1")
     api_key = os.getenv("LMSTUDIO_API_KEY", "lm-studio")
     requested_model = os.getenv("LMSTUDIO_MODEL", "local-model")
@@ -75,8 +75,8 @@ def get_local_llm(temperature: float | None = None):
 
 
 def get_llm():
-    provider = os.getenv("MODEL_PROVIDER", "lmstudio").lower()
-    max_tokens = int(os.getenv("MAX_TOKENS", "1000"))
+    provider = os.getenv("MODEL_PROVIDER", "groq").lower()
+    max_tokens = int(os.getenv("MAX_TOKENS", "8000"))
 
     if provider == "lmstudio":
         return get_local_llm()
@@ -85,5 +85,14 @@ def get_llm():
         model = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:7b")
         return ChatOllama(model=model, temperature=0)
 
-    model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-    return ChatGroq(model=model, temperature=0, max_tokens=max_tokens)
+    # Groq with tool-use optimized model
+    model = os.getenv("GROQ_MODEL", "llama3-groq-70b-8192-tool-use-preview")
+    return ChatGroq(
+        model=model,
+        temperature=0,
+        max_tokens=max_tokens,
+        # Groq-specific settings for better tool calling
+        model_kwargs={
+            "tool_choice": "auto",  # Let model decide when to use tools
+        }
+    )
