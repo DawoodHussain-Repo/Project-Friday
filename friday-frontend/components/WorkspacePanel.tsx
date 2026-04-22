@@ -2,6 +2,7 @@ import type { WorkspaceNode } from "../lib/api";
 
 interface WorkspacePanelProps {
   nodes: WorkspaceNode[];
+  isLoading?: boolean;
 }
 
 function TreeNode({ node }: { node: WorkspaceNode }) {
@@ -23,11 +24,16 @@ function TreeNode({ node }: { node: WorkspaceNode }) {
   );
 }
 
-export function WorkspacePanel({ nodes }: WorkspacePanelProps) {
+export function WorkspacePanel({
+  nodes,
+  isLoading = false,
+}: WorkspacePanelProps) {
   return (
     <aside className="chat-scrollbar min-h-[32vh] overflow-auto rounded-2xl border border-friday-line bg-friday-paper p-4 shadow-panel lg:min-h-[82vh]">
       <h3 className="mb-3 font-heading text-lg text-friday-ink">Workspace</h3>
-      {nodes.length === 0 ? (
+      {isLoading ? (
+        <p className="text-sm text-friday-muted">Loading workspace...</p>
+      ) : nodes.length === 0 ? (
         <p className="text-sm text-friday-muted">
           No files yet in sandbox workspace.
         </p>

@@ -10,20 +10,24 @@ import { ThinkingIndicator } from "./ThinkingIndicator";
 import { WorkspacePanel } from "./WorkspacePanel";
 
 export function FridayChat() {
-  const { events, send, stop, isStreaming, setEvents } = useFridayStream();
+  const { events, send, stop, isStreaming, clearEvents } = useFridayStream();
   const [query, setQuery] = useState("");
   const [tree, setTree] = useState<WorkspaceNode[]>([]);
+  const [workspaceLoading, setWorkspaceLoading] = useState(true);
   const [sidebarTab, setSidebarTab] = useState<"workspace" | "skills">(
     "workspace",
   );
   const endRef = useRef<HTMLDivElement | null>(null);
 
   const refreshWorkspace = useCallback(async () => {
+    setWorkspaceLoading(true);
     try {
       const snapshot = await getWorkspaceTree();
       setTree(snapshot);
     } catch {
       setTree([]);
+    } finally {
+      setWorkspaceLoading(false);
     }
   }, []);
 
@@ -42,22 +46,25 @@ export function FridayChat() {
     endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [events, isStreaming]);
 
-  const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    const trimmed = query.trim();
-    if (!trimmed || isStreaming) {
-      return;
-    }
+  const onSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      const trimmed = query.trim();
+      if (!trimmed || isStreaming) {
+        return;
+      }
 
-    setQuery("");
-    await send(trimmed);
-  };
+      setQuery("");
+      await send(trimmed);
+    },
+    [isStreaming, query, send],
+  );
 
   const onNewChat = () => {
     if (isStreaming) {
       stop();
     }
-    setEvents([]);
+    clearEvents();
   };
 
   return (
@@ -73,7 +80,7 @@ export function FridayChat() {
             </p>
           </div>
           <button
-            className="mt-1 rounded-xl border border-friday-line bg-friday-soft px-3 py-1.5 text-xs font-semibold text-friday-muted transition hover:border-[#c89f9f] hover:bg-[#f6e9e8] hover:text-[#8a3530]"
+            className="mt-1 rounded-xl border border-friday-line bg-friday-soft px-3 py-1.5 text-xs font-semibold text-friday-muted transition hover:border-friday-alertBorder hover:bg-friday-alertBg hover:text-friday-alertText"
             onClick={onNewChat}
             title="Start a new conversation"
           >
@@ -91,8 +98,8 @@ export function FridayChat() {
               </p>
             </div>
           ) : null}
-          {events.map((event, index) => (
-            <MessageBubble key={`${event.type}-${index}`} event={event} />
+          {events.map((event) => (
+            <MessageBubble key={event.id} event={event} />
           ))}
           {isStreaming ? (
             <div className="flex w-full justify-start">
@@ -108,7 +115,7 @@ export function FridayChat() {
         >
           <input
             id="friday-chat-input"
-            className="flex-1 rounded-xl border border-[#d7ceb9] bg-[#fffcf6] px-3 py-2.5 text-base text-friday-ink outline-none transition focus:border-[#95b4d4] focus:ring-2 focus:ring-[#d8e5f2]"
+            className="flex-1 rounded-xl border border-friday-inputBorder bg-friday-inputBg px-3 py-2.5 text-base text-friday-ink outline-none transition focus:border-friday-focusBorder focus:ring-2 focus:ring-friday-focusRing"
             placeholder="Ask Friday anything…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
@@ -116,7 +123,7 @@ export function FridayChat() {
 
           {isStreaming ? (
             <button
-              className="min-w-24 rounded-xl border border-[#c89f9f] bg-[#f6e9e8] px-4 py-2.5 text-sm font-semibold text-[#8a3530] transition hover:bg-[#f1dfdd]"
+              className="min-w-24 rounded-xl border border-friday-alertBorder bg-friday-alertBg px-4 py-2.5 text-sm font-semibold text-friday-alertText transition hover:bg-friday-alertBgHover"
               type="button"
               onClick={stop}
             >
@@ -153,7 +160,7 @@ export function FridayChat() {
         </div>
 
         {sidebarTab === "workspace" ? (
-          <WorkspacePanel nodes={tree} />
+          <WorkspacePanel nodes={tree} isLoading={workspaceLoading} />
         ) : (
           <SkillsPanel />
         )}

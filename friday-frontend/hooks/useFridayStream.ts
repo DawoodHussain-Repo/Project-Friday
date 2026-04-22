@@ -1,17 +1,15 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 
 import type { FridayEvent } from "../lib/api";
 
+export interface StreamEvent extends FridayEvent {
+  id: string;
+}
+
 function createConversationId(): string {
-  if (
-    typeof crypto !== "undefined" &&
-    typeof crypto.randomUUID === "function"
-  ) {
-    return crypto.randomUUID();
-  }
-  return `conv-${Date.now()}-${Math.round(Math.random() * 100000)}`;
+  return crypto.randomUUID();
 }
 
 function parseSsePayload(raw: string): FridayEvent[] {
@@ -30,7 +28,9 @@ function parseSsePayload(raw: string): FridayEvent[] {
         const parsed = JSON.parse(payload) as FridayEvent;
         events.push(parsed);
       } catch {
-        // Ignore malformed chunks and continue reading stream.
+        if (process.env.NODE_ENV !== "production") {
+          console.warn("Ignoring malformed SSE payload", payload);
+        }
       }
     }
   }
@@ -39,9 +39,10 @@ function parseSsePayload(raw: string): FridayEvent[] {
 }
 
 function appendUniqueEvents(
-  existing: FridayEvent[],
+  existing: StreamEvent[],
   incoming: FridayEvent[],
-): FridayEvent[] {
+  allocateId: () => string,
+): StreamEvent[] {
   const next = [...existing];
 
   for (const event of incoming) {
@@ -82,21 +83,27 @@ function appendUniqueEvents(
       last.type === "thought" &&
       last.content === normalized.content
     ) {
-      next[next.length - 1] = normalized;
+      next[next.length - 1] = { ...normalized, id: last.id };
       continue;
     }
 
-    next.push(normalized);
+    next.push({ ...normalized, id: allocateId() });
   }
 
   return next;
 }
 
 export function useFridayStream() {
-  const [events, setEvents] = useState<FridayEvent[]>([]);
+  const [events, setEvents] = useState<StreamEvent[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [controller, setController] = useState<AbortController | null>(null);
   const [conversationId] = useState(createConversationId);
+  const nextEventCounter = useRef(0);
+
+  const allocateEventId = useCallback(() => {
+    nextEventCounter.current += 1;
+    return `evt-${nextEventCounter.current}`;
+  }, []);
 
   const send = useCallback(
     async (query: string) => {
@@ -109,7 +116,11 @@ export function useFridayStream() {
       setController(abortController);
 
       setEvents((prev) =>
-        appendUniqueEvents(prev, [{ type: "user", content: query }]),
+        appendUniqueEvents(
+          prev,
+          [{ type: "user", content: query }],
+          allocateEventId,
+        ),
       );
 
       try {
@@ -142,7 +153,9 @@ export function useFridayStream() {
           for (const chunk of chunks) {
             const parsed = parseSsePayload(chunk + "\n\n");
             if (parsed.length > 0) {
-              setEvents((prev) => appendUniqueEvents(prev, parsed));
+              setEvents((prev) =>
+                appendUniqueEvents(prev, parsed, allocateEventId),
+              );
             }
           }
         }
@@ -150,15 +163,19 @@ export function useFridayStream() {
         if (buffer.trim()) {
           const parsed = parseSsePayload(buffer);
           if (parsed.length > 0) {
-            setEvents((prev) => appendUniqueEvents(prev, parsed));
+            setEvents((prev) =>
+              appendUniqueEvents(prev, parsed, allocateEventId),
+            );
           }
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === "AbortError") {
           setEvents((prev) =>
-            appendUniqueEvents(prev, [
-              { type: "final", content: "Stopped by user." },
-            ]),
+            appendUniqueEvents(
+              prev,
+              [{ type: "final", content: "Stopped by user." }],
+              allocateEventId,
+            ),
           );
           return;
         }
@@ -166,16 +183,18 @@ export function useFridayStream() {
         const message =
           error instanceof Error ? error.message : "Unknown stream error";
         setEvents((prev) =>
-          appendUniqueEvents(prev, [
-            { type: "final", content: `Error: ${message}` },
-          ]),
+          appendUniqueEvents(
+            prev,
+            [{ type: "final", content: `Error: ${message}` }],
+            allocateEventId,
+          ),
         );
       } finally {
         setController(null);
         setIsStreaming(false);
       }
     },
-    [conversationId, isStreaming],
+    [allocateEventId, conversationId, isStreaming],
   );
 
   const stop = useCallback(() => {
@@ -185,5 +204,10 @@ export function useFridayStream() {
     controller.abort();
   }, [controller]);
 
-  return { events, send, stop, isStreaming, setEvents };
+  const clearEvents = useCallback(() => {
+    setEvents([]);
+    nextEventCounter.current = 0;
+  }, []);
+
+  return { events, send, stop, isStreaming, clearEvents };
 }
