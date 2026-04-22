@@ -93,8 +93,14 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
         "tool_attempts": 0,
         "active_skill": None,
         "skill_context": None,
+        "system_rules": None,
+        "memory_summary": None,
+        "summary_cursor": 0,
         "target_directory": None,
         "error_history": [],
+        "needs_revision": False,
+        "validation_attempts": 0,
+        "final_answer": None,
     }
     config = {
         "configurable": {"thread_id": thread_id},
@@ -138,9 +144,6 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
                                 call.get("args", {}), ensure_ascii=True
                             )
                             yield _sse_payload("tool_call", f"{tool_name} {args}")
-                    else:
-                        if text:
-                            yield _sse_payload("final", str(text))
 
                 if node_name == "tools" and messages:
                     for message in messages:
@@ -163,6 +166,21 @@ async def event_stream(query: str, conversation_id: str | None, request: Request
                         yield _sse_payload(
                             "tool_result", f"[{tool_name}] {serialized_output}"
                         )
+
+                if node_name == "validate":
+                    needs_revision = bool(payload.get("needs_revision", False))
+                    final_answer = str(payload.get("final_answer", "")).strip()
+
+                    if needs_revision:
+                        validator_messages = payload.get("messages", [])
+                        for message in validator_messages:
+                            text = _normalize_message_content(
+                                getattr(message, "content", "")
+                            ).strip()
+                            if text:
+                                yield _sse_payload("thought", text)
+                    elif final_answer:
+                        yield _sse_payload("final", final_answer)
     except Exception as exc:
         yield _sse_payload("final", f"Friday failed: {exc}")
 

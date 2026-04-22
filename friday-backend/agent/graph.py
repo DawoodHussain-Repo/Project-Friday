@@ -7,8 +7,13 @@ Graph topology::
     │   agent    │ ─── YES ──────▶ │    tools      │
     │   (LLM)   │ ◀────────────── │  (executor)   │
     └─────┬──────┘                 └──────────────┘
-          │ NO (final answer)
-          ▼
+        │ NO
+        ▼
+     ┌────────────┐
+     │  validate  │ --needs_revision--> agent
+     └─────┬──────┘
+         │ pass
+         ▼
         END
 
 The tool node is built dynamically so that newly registered skills are
@@ -24,7 +29,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
-from agent.nodes import agent_node, router
+from agent.nodes import agent_node, router, validator_node, validator_router
 from agent.state import AgentState
 from agent.tools import get_registered_tools
 
@@ -70,11 +75,13 @@ builder = StateGraph(AgentState)
 
 builder.add_node("agent", agent_node)
 builder.add_node("tools", dynamic_tool_node)
+builder.add_node("validate", validator_node)
 
 builder.set_entry_point("agent")
 
-builder.add_conditional_edges("agent", router, {"tools": "tools", END: END})
+builder.add_conditional_edges("agent", router, {"tools": "tools", "validate": "validate"})
 builder.add_edge("tools", "agent")  # loop back after tool execution
+builder.add_conditional_edges("validate", validator_router, {"agent": "agent", END: END})
 
 graph = builder.compile(
     checkpointer=MemorySaver(),

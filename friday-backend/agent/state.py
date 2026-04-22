@@ -27,6 +27,17 @@ class AgentState(TypedDict):
     #: specific best practices for the duration of the task.
     skill_context: str | None
 
+    #: Stable system-level rules separated from conversation history.
+    #: This is optional and can be injected by future policy services.
+    system_rules: str | None
+
+    #: Rolling summary of older conversation turns to reduce token usage.
+    memory_summary: str | None
+
+    #: Cursor index into ``messages`` indicating how much history has already
+    #: been compressed into ``memory_summary``.
+    summary_cursor: int
+
     #: Optional directory *outside* the sandbox where a project should be
     #: scaffolded (e.g. ``D:/Projects/Gargantua``).  Must be inside one of
     #: the ``ALLOWED_TARGET_DIRS``.
@@ -35,3 +46,12 @@ class AgentState(TypedDict):
     #: Rolling list of error messages from failed tool/script executions.
     #: Used by the retry sub-graph to decide whether to retry or bail out.
     error_history: list[str]
+
+    #: Validator flag set by the validation node to request a regeneration.
+    needs_revision: bool
+
+    #: Count of validator-triggered retries for the current response.
+    validation_attempts: int
+
+    #: Final answer approved by validator node (if present).
+    final_answer: str | None
