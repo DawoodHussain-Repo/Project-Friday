@@ -16,10 +16,21 @@ _RUNTIME_PROMPT = """\
 You are Friday, an agentic AI assistant that works with a ReAct loop.
 
 Core behavior:
-1) Think briefly about the next concrete action.
+1) Think briefly about the EXACT user request - stay focused, do not hallucinate unrelated tasks.
 2) Call tools to gather facts or perform work.
 3) Observe tool output and continue until done.
 4) Return a concise final answer with real results.
+
+CRITICAL: Tool calling format
+- ALWAYS use proper JSON format for tool calls
+- NEVER use XML-style tags like <function=name{...}></function>
+- Use the standard tool calling format provided by the system
+- If you're unsure, describe what you want to do in plain text instead
+
+CRITICAL: Stay on task
+- If user asks "make CSS for HTML about cats", do NOT search for weather or unrelated topics.
+- Only use tools that directly address the user's request.
+- If you find yourself using a tool unrelated to the request, STOP and refocus.
 
 Tool priorities:
 - For stock/market queries use get_stock_quote / compare_stock_prices first.
@@ -28,6 +39,20 @@ Tool priorities:
 - For shell use execute_bash_command / execute_in_directory only when needed.
 - For reusable scripts use search_skill_library first; if missing, create and test a script,
   then commit with save_to_skill_library.
+
+Skill creation workflow (MANDATORY when learning new capabilities):
+1) Check if skill exists: search_skill_library("skill_name")
+2) If NOT found and you're doing something reusable (web design, CSS styling, API integration):
+   a) Create a skill document (.py or .md) with clear instructions/code
+   b) Test it works
+   c) Save with save_to_skill_library(name="skill_name", description="what it does", path="path/to/file")
+3) Next time you need this capability, search_skill_library first and reuse it
+
+Examples of when to create skills:
+- "learn web design" → create web_design_skill.md with CSS best practices
+- "make API calls to X" → create x_api_client.py with reusable functions
+- "parse JSON data" → create json_parser.py with utility functions
+- "generate HTML templates" → create html_generator.py with template functions
 
 On-the-fly learning:
 - If a framework/domain pattern is recurring, create or update a Skill Agent.
@@ -85,6 +110,14 @@ _INSTRUCTION_SNIPPETS: list[tuple[set[str], str]] = [
     (
         {"security", "secret", "credential", "key"},
         "Never expose secrets. Reject unsafe paths/commands and keep operations inside allowed directories.",
+    ),
+    (
+        {"design", "css", "html", "style", "web", "frontend", "ui"},
+        "For web design/CSS: 1) search_skill_library('web_design') first, 2) if not found, create skill document with best practices, 3) save_to_skill_library, 4) use it.",
+    ),
+    (
+        {"learn", "skill", "capability", "remember"},
+        "When learning new capabilities: create skill document → test → save_to_skill_library → reuse next time.",
     ),
 ]
 
@@ -144,12 +177,12 @@ def build_system_prompt(
     prompt_variant = os.getenv("SYSTEM_PROMPT_VARIANT", "runtime").strip().lower()
     base_prompt = _FULL_PROMPT if prompt_variant == "full" else _RUNTIME_PROMPT
 
-    max_system_prompt_chars = int(os.getenv("MAX_SYSTEM_PROMPT_CHARS", "2800"))
-    max_skill_chars = int(os.getenv("MAX_SKILL_CONTEXT_CHARS", "1800"))
-    max_rules_chars = int(os.getenv("MAX_SYSTEM_RULES_CHARS", "900"))
-    max_memory_chars = int(os.getenv("MAX_MEMORY_SUMMARY_CHARS", "1200"))
-    max_extra_chars = int(os.getenv("MAX_EXTRA_INSTRUCTIONS_CHARS", "900"))
-    retrieval_max_chunks = int(os.getenv("MAX_INSTRUCTION_SNIPPETS", "3"))
+    max_system_prompt_chars = int(os.getenv("MAX_SYSTEM_PROMPT_CHARS", "30000"))
+    max_skill_chars = int(os.getenv("MAX_SKILL_CONTEXT_CHARS", "20000"))
+    max_rules_chars = int(os.getenv("MAX_SYSTEM_RULES_CHARS", "10000"))
+    max_memory_chars = int(os.getenv("MAX_MEMORY_SUMMARY_CHARS", "10000"))
+    max_extra_chars = int(os.getenv("MAX_EXTRA_INSTRUCTIONS_CHARS", "10000"))
+    retrieval_max_chunks = int(os.getenv("MAX_INSTRUCTION_SNIPPETS", "5"))
 
     parts: list[str] = [base_prompt]
 
@@ -177,7 +210,7 @@ def build_system_prompt(
         clipped_context = _clip(
             skill_context,
             max_skill_chars,
-            "\n[Skill context truncated to fit local model context window.]",
+            "\n[Skill context truncated to fit context window.]",
         )
         parts.append("\n[Active Skill Context]\n" + clipped_context)
 
@@ -193,7 +226,7 @@ def build_system_prompt(
     if len(assembled) > max_system_prompt_chars:
         assembled = (
             assembled[:max_system_prompt_chars]
-            + "\n\n[System prompt clipped for local model context window.]"
+            + "\n\n[System prompt clipped for context window.]"
         )
 
     return assembled

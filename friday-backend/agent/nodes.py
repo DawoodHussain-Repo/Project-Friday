@@ -11,19 +11,23 @@ Nodes
 
 from functools import lru_cache
 import os
+import re
 from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END
 
+from agent.logger import setup_logger
 from agent.model import get_llm
 from agent.state import AgentState
 from agent.system_prompt import build_system_prompt
 from agent.tools import get_registered_tools
 
-MAX_HISTORY_MESSAGES: int = int(os.getenv("MAX_HISTORY_MESSAGES", "12"))
-MAX_MEMORY_SUMMARY_CHARS: int = int(os.getenv("MAX_MEMORY_SUMMARY_CHARS", "1200"))
-MAX_INPUT_CHARS: int = int(os.getenv("MAX_INPUT_CHARS", "9000"))
+logger = setup_logger(__name__)
+
+MAX_HISTORY_MESSAGES: int = int(os.getenv("MAX_HISTORY_MESSAGES", "50"))
+MAX_MEMORY_SUMMARY_CHARS: int = int(os.getenv("MAX_MEMORY_SUMMARY_CHARS", "10000"))
+MAX_INPUT_CHARS: int = int(os.getenv("MAX_INPUT_CHARS", "100000"))
 MAX_VALIDATION_ATTEMPTS: int = int(os.getenv("MAX_VALIDATION_ATTEMPTS", "1"))
 
 
@@ -135,7 +139,50 @@ async def agent_node(state: AgentState) -> dict[str, Any]:
         bounded_history = bounded_history[1:]
         messages = [SystemMessage(content=system_prompt)] + bounded_history
 
-    response = await llm_with_tools.ainvoke(messages)
+    try:
+        response = await llm_with_tools.ainvoke(messages)
+    except Exception as e:
+        error_msg = str(e)
+        logger.error(f"LLM invocation failed: {error_msg}", exc_info=True)
+        
+        # Check if it's a tool use failure from Groq
+        if "tool_use_failed" in error_msg or "Failed to call a function" in error_msg:
+            # Extract the failed generation if available
+            failed_gen_match = re.search(r"'failed_generation': '([^']+)'", error_msg)
+            failed_gen = failed_gen_match.group(1) if failed_gen_match else "unknown"
+            
+            logger.warning(f"Tool use failed - malformed output: {failed_gen[:200]}")
+            
+            # Try again without tool binding - let the model respond in plain text
+            logger.info("Retrying without tool binding - model will respond in plain text")
+            try:
+                llm_without_tools = _get_base_llm()
+                # Add instruction to describe what it wants to do
+                retry_messages = messages + [
+                    SystemMessage(content="The previous tool call failed due to formatting issues. "
+                                         "Please describe in plain text what you want to do, "
+                                         "and I'll help you execute it properly.")
+                ]
+                response = await llm_without_tools.ainvoke(retry_messages)
+                logger.info("Successfully got response without tool binding")
+            except Exception as retry_error:
+                logger.error(f"Retry without tools also failed: {retry_error}", exc_info=True)
+                # Return an error message to the user
+                error_response = AIMessage(
+                    content=f"I encountered persistent errors trying to process your request. "
+                            f"The model is having trouble with tool calls. "
+                            f"Please try rephrasing your request or breaking it into smaller steps."
+                )
+                return {
+                    "messages": [error_response],
+                    "memory_summary": memory_summary,
+                    "summary_cursor": max(cursor, summary_cutoff),
+                    "needs_revision": False,
+                    "final_answer": None,
+                }
+        else:
+            # Re-raise other errors
+            raise
 
     return {
         "messages": [response],
