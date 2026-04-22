@@ -4,6 +4,7 @@ langchain==0.3.18
 langgraph==0.2.73
 langchain-core==0.3.35
 langchain-community==0.3.17
+langgraph-checkpoint-sqlite==2.0.11
 langchain-openai==0.3.6
 langchain-groq==0.2.4
 langchain-ollama==0.2.3

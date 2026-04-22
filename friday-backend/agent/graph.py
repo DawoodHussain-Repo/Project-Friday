@@ -24,8 +24,10 @@ wrapper on every invocation unless the skill index has changed.
 import hashlib
 import json
 import os
+import sqlite3
 
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -70,6 +72,50 @@ def dynamic_tool_node(state: AgentState):
 # ---------------------------------------------------------------------------
 
 RECURSION_LIMIT: int = int(os.getenv("RECURSION_LIMIT", "25"))
+CHECKPOINTER_BACKEND: str = os.getenv("CHECKPOINTER_BACKEND", "sqlite").strip().lower()
+DEFAULT_CHECKPOINTS_DIR: str = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "checkpoints")
+)
+CHECKPOINTS_DIR: str = os.path.abspath(
+    os.getenv("CHECKPOINTS_DIR", DEFAULT_CHECKPOINTS_DIR)
+)
+CHECKPOINTS_DB_PATH: str = os.path.abspath(
+    os.getenv("CHECKPOINTS_DB_PATH", os.path.join(CHECKPOINTS_DIR, "friday_state.sqlite"))
+)
+
+_sqlite_connection: sqlite3.Connection | None = None
+
+
+def _build_checkpointer():
+    """Create the configured graph checkpointer.
+
+    - ``sqlite`` (default): persists threads to a SQLite DB on disk.
+    - ``memory``: ephemeral in-memory saver for test sessions.
+    """
+    global _sqlite_connection  # noqa: PLW0603
+
+    if CHECKPOINTER_BACKEND == "memory":
+        return MemorySaver()
+
+    if CHECKPOINTER_BACKEND != "sqlite":
+        raise ValueError(
+            "Unsupported CHECKPOINTER_BACKEND. Use 'sqlite' or 'memory'."
+        )
+
+    os.makedirs(os.path.dirname(CHECKPOINTS_DB_PATH), exist_ok=True)
+    _sqlite_connection = sqlite3.connect(CHECKPOINTS_DB_PATH, check_same_thread=False)
+    saver = SqliteSaver(_sqlite_connection)
+    saver.setup()
+    return saver
+
+
+def close_graph_resources() -> None:
+    """Close open graph resources (SQLite connection) on app shutdown."""
+    global _sqlite_connection  # noqa: PLW0603
+
+    if _sqlite_connection is not None:
+        _sqlite_connection.close()
+        _sqlite_connection = None
 
 builder = StateGraph(AgentState)
 
@@ -84,6 +130,6 @@ builder.add_edge("tools", "agent")  # loop back after tool execution
 builder.add_conditional_edges("validate", validator_router, {"agent": "agent", END: END})
 
 graph = builder.compile(
-    checkpointer=MemorySaver(),
+    checkpointer=_build_checkpointer(),
     # recursion_limit is set per-invocation in main.py
 )

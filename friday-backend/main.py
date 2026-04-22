@@ -21,7 +21,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import BaseModel
 
-from agent.graph import graph
+from agent.graph import close_graph_resources, graph
 from agent.tools.os_tools import WORKSPACE_DIR
 from agent.tools.skill_agent import get_all_skill_agent_names, load_skill_context
 from agent.tools.skill_library import load_skill_index
@@ -42,6 +42,12 @@ app = FastAPI(
     version="0.2.0",
     description="A self-improving, tool-using AI agent with a ReAct brain.",
 )
+
+
+@app.on_event("shutdown")
+def shutdown_graph_resources() -> None:
+    """Release persistent graph resources cleanly during server shutdown."""
+    close_graph_resources()
 
 app.add_middleware(
     CORSMiddleware,

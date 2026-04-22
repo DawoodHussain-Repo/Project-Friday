@@ -4,6 +4,7 @@ friday-backend/venv/
 friday-backend/__pycache__/
 friday-backend/**/*.pyc
 friday-backend/.env
+friday-backend/checkpoints/
 
 # Frontend
 friday-frontend/node_modules/
