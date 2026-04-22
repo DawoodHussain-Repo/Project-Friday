@@ -338,6 +338,23 @@ GET & \texttt{/api/friday/agents} & \texttt{/agents} & Skill Agents \\
 \textbf{Returns} & Top 3 result summaries joined by blank lines \\
 \end{tabular}
 
+\subsection{Market Data}
+
+\subsubsection{get\_stock\_quote}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Arg} & \texttt{symbol: str} --- ticker symbol (e.g., NVDA) \\
+\textbf{Provider} & Yahoo Finance via \texttt{yfinance} \\
+\textbf{Returns} & JSON with current price, daily change, market cap, P/E (when available) \\
+\end{tabular}
+
+\subsubsection{compare\_stock\_prices}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & \texttt{symbol\_a: str}, \texttt{symbol\_b: str} \\
+\textbf{Returns} & JSON with both quotes plus computed deltas/ratio \\
+\end{tabular}
+
 \subsection{Skill Library}
 
 \subsubsection{save\_to\_skill\_library}
@@ -387,6 +404,38 @@ GET & \texttt{/api/friday/agents} & \texttt{/agents} & Skill Agents \\
 \textbf{Returns} & Summary of updated counts \\
 \end{tabular}
 
+\subsection{Dynamic MCP Tools}
+
+\subsubsection{register\_mcp\_tool}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & \texttt{tool\_name}, \texttt{description}, \texttt{endpoint}, \texttt{method=POST}, \texttt{server\_name=default}, \texttt{headers\_json=\"\{\}\"} \\
+\textbf{Action} & Saves endpoint metadata to \texttt{skills/mcp\_tools.json} and exposes dynamic tool \texttt{mcp\_<tool\_name>} \\
+\textbf{Returns} & Registration confirmation or validation error \\
+\end{tabular}
+
+\subsubsection{list\_registered\_mcp\_tools}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & None \\
+\textbf{Returns} & JSON list of registered MCP tool definitions \\
+\end{tabular}
+
+\subsubsection{unregister\_mcp\_tool}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Arg} & \texttt{tool\_name: str} \\
+\textbf{Returns} & Confirmation or not-found message \\
+\end{tabular}
+
+\subsubsection{mcp\_call}
+
+\begin{tabular}{@{}lp{10cm}@{}}
+\textbf{Args} & \texttt{server\_name: str}, \texttt{tool\_name: str}, \texttt{payload: str=\"\{\}\"} \\
+\textbf{Action} & Executes a registered MCP entry by server/name \\
+\textbf{Returns} & Endpoint response text/JSON or error string \\
+\end{tabular}
+
 % ══════════════════════════════════════════════════════════════
 \section{Configuration Reference}
 
@@ -410,8 +459,12 @@ GET & \texttt{/api/friday/agents} & \texttt{/agents} & Skill Agents \\
 \texttt{SKILLS\_DIR} & \texttt{./skills} & Skill library directory \\
 \texttt{MAX\_TOOL\_ATTEMPTS} & \texttt{3} & Retry budget for failed tools \\
 \texttt{RECURSION\_LIMIT} & \texttt{25} & LangGraph recursion hard cap \\
+\texttt{MAX\_HISTORY\_MESSAGES} & \texttt{12} & Max conversation messages sent to LLM each turn \\
+\texttt{MAX\_SKILL\_CONTEXT\_CHARS} & \texttt{1800} & Max injected skill-context length in system prompt \\
 \texttt{COMMAND\_TIMEOUT} & \texttt{120} & Max subprocess runtime (seconds) \\
 \texttt{COMMAND\_ALLOWLIST} & \texttt{python,npm,...} & Allowed command prefixes (comma-separated) \\
+\texttt{COMMAND\_DENYLIST} & \texttt{curl,wget} & Explicitly blocked command prefixes (wins over allowlist) \\
+\texttt{MCP\_TIMEOUT\_SECONDS} & \texttt{20} & Timeout for dynamic MCP endpoint calls \\
 \texttt{ALLOWED\_TARGET\_DIRS} & (empty) & Directories for external scaffolding (comma-separated absolute paths) \\
 \texttt{NEXTJS\_ORIGIN} & \texttt{http://localhost:3000} & Frontend origin for CORS \\
 \texttt{FRIDAY\_BACKEND\_URL} & \texttt{http://localhost:8000} & Backend URL (used by frontend proxy) \\

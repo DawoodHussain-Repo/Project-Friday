@@ -15,6 +15,8 @@
 \usepackage{fancyhdr}
 \usepackage{tcolorbox}
 \usepackage{parskip}
+\usepackage{tikz}
+\usetikzlibrary{positioning,arrows.meta}
 
 % ── Colours ────────────────────────────────────────────────────
 \definecolor{fridaybrand}{HTML}{1E5A96}
@@ -163,6 +165,53 @@ Friday is a personal agentic AI assistant that reasons over a set of tools to co
 \end{tabular}
 \end{table}
 
+\subsection{LangGraph Node/Edge Visualization}
+
+\begin{figure}[h!]
+\centering
+\begin{tikzpicture}[
+  node distance=2.8cm,
+  box/.style={draw=fridaybrand, rounded corners, thick, minimum width=3.1cm, minimum height=1.0cm, align=center, fill=blue!4},
+  edge/.style={-{Latex[length=2.8mm]}, thick, draw=fridaybrand}
+]
+\node[box] (start) {START};
+\node[box, right=of start] (agent) {agent node\\(LLM + tools)};
+\node[box, right=of agent] (tools) {tools node\\(Tool executor)};
+\node[box, below=of agent] (endn) {END};
+
+\draw[edge] (start) -- (agent);
+\draw[edge] (agent) -- node[above, font=\small] {tool\_calls} (tools);
+\draw[edge] (tools) -- node[above, font=\small] {tool results} (agent);
+\draw[edge] (agent) -- node[right, font=\small] {no tool\_calls} (endn);
+\end{tikzpicture}
+\caption{Friday's LangGraph control flow (nodes and directed edges).}
+\end{figure}
+
+\begin{notebox}
+The graph is intentionally cyclic (agent $\leftrightarrow$ tools).  This is what enables iterative ReAct behavior: the LLM can inspect tool output and decide the next action until completion.
+\end{notebox}
+
+% ══════════════════════════════════════════════════════════════
+\section{Architecture Decisions (Why)}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}p{3.4cm}p{5.4cm}p{5.0cm}@{}}
+\toprule
+\textbf{Decision} & \textbf{Why This Choice} & \textbf{Trade-off Accepted} \\
+\midrule
+LangGraph ReAct loop & Needed explicit cyclic control flow for tool use and retries instead of one-shot prompting. & More state management complexity than a linear chain. \\
+FastAPI + SSE & Streaming intermediate thought/tool events improves observability and UX responsiveness. & SSE parsing/dedup logic is more complex than plain JSON responses. \\
+Sandbox + allowlist shell policy & Reduces blast radius for command execution and path traversal risks. & Some legitimate commands require explicit allowlist updates. \\
+Skill library + dynamic tool loading & Makes capabilities persistent and reusable across sessions; enables self-improvement. & Requires index management and tool-name collision handling. \\
+Skill Agents (framework manifests) & Encodes framework-specific best practices so outputs stay consistent over time. & Adds maintenance overhead for guide quality/versioning. \\
+Dynamic MCP registry tools & Lets Friday learn external API-style tools at runtime instead of hardcoding all integrations. & Runtime registration can fail if endpoint metadata is poor. \\
+Prompt/context budgeting & Prevents local-model failures on small context windows (e.g., 4k) by trimming prompt/history. & Some long-tail context can be dropped on very long chats. \\
+Local-first LM Studio default & Fast local iteration without cloud spend/rate limits. & Smaller local models may need stricter prompt discipline. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 % ══════════════════════════════════════════════════════════════
 \section{Agent State}
 
@@ -228,6 +277,20 @@ Shell commands are validated against a configurable \textbf{allowlist} (first to
 
 \texttt{web\_search} queries the web via Tavily (if configured) or DuckDuckGo (fallback), returning the top 3 result summaries.
 
+\subsection{Market Data}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Tool} & \textbf{Description} \\
+\midrule
+\texttt{get\_stock\_quote} & Fetches quote data for a ticker using Yahoo Finance (price, change, market cap, P/E where available) \\
+\texttt{compare\_stock\_prices} & Fetches and compares two ticker symbols in a single call \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{Skill Library}
 
 \begin{table}[h!]
@@ -254,6 +317,22 @@ Shell commands are validated against a configurable \textbf{allowlist} (first to
 \texttt{load\_skill\_context} & Loads an agent's manifest and style guide into the LLM context \\
 \texttt{list\_skill\_agents} & Lists all registered Skill Agents and their descriptions \\
 \texttt{update\_skill\_agent} & Patches an existing agent's rules, description, or scaffold steps \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Dynamic MCP Tools}
+
+\begin{table}[h!]
+\centering
+\begin{tabular}{@{}lp{9cm}@{}}
+\toprule
+\textbf{Tool} & \textbf{Description} \\
+\midrule
+\texttt{register\_mcp\_tool} & Registers an external endpoint at runtime; creates dynamic tool \texttt{mcp\_<name>} \\
+\texttt{list\_registered\_mcp\_tools} & Lists currently registered MCP tools from \texttt{skills/mcp\_tools.json} \\
+\texttt{unregister\_mcp\_tool} & Removes a runtime-registered MCP tool \\
+\texttt{mcp\_call} & Directly invokes a registered MCP tool by server/name \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -481,11 +560,15 @@ Project-Friday/
         __init__.py           # Tool registry
         os_tools.py           # File + shell tools
         web_search.py         # Tavily / DuckDuckGo
+        market_data.py        # Yahoo Finance quote/compare tools
+        mcp_registry.py       # Runtime MCP registration + dynamic tools
+        mcp_client.py         # MCP invocation wrapper
         skill_library.py      # Save / search skills
         skill_agent.py        # Skill Agent CRUD
     workspace/                # Sandboxed file system
     skills/
       index.json              # Script skill registry
+      mcp_tools.json          # Runtime MCP tool registry
       agents/                 # Skill Agent definitions
   friday-frontend/
     app/
@@ -514,7 +597,7 @@ Project-Friday/
 \begin{enumerate}[leftmargin=*]
   \item \textbf{Semantic skill search:} Replace \texttt{SequenceMatcher} with embedding-based lookup (ChromaDB or LanceDB).
   \item \textbf{Persistent memory:} Replace \texttt{MemorySaver} with SQLite or file-based checkpointer for conversation persistence across restarts.
-  \item \textbf{MCP integration:} Connect to Model Context Protocol servers for external tool providers.
+  \item \textbf{Richer MCP transport:} Add full protocol-level MCP transport/session support beyond simple HTTP endpoint wrappers.
   \item \textbf{Multi-language skills:} Support non-Python skill scripts (Node.js, Bash, Go).
   \item \textbf{Container isolation:} Run tool commands in Docker containers for production-grade sandboxing.
   \item \textbf{Authentication:} Add API key or JWT-based auth for production deployments.
