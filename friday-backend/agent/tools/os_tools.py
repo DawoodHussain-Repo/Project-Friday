@@ -8,13 +8,11 @@ command **allowlist** — only explicitly permitted command prefixes are run.
 
 import os
 import re
+import shlex
 import subprocess
 from pathlib import Path
 
-from dotenv import load_dotenv
 from langchain_core.tools import tool
-
-load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -156,7 +154,15 @@ def _is_command_allowed(command: str) -> tuple[bool, str]:
                 "Run each command separately instead of chaining."
             )
 
-    first_token = stripped.split()[0].lower()
+    try:
+        parsed = shlex.split(stripped, posix=(os.name != "nt"))
+    except ValueError as exc:
+        return False, f"Invalid command syntax: {exc}"
+
+    if not parsed:
+        return False, "Empty command."
+
+    first_token = parsed[0].lower()
     # Strip common path prefixes so "python3", "./node_modules/.bin/tsc" etc.
     # still match the allowlist.
     first_token_base = os.path.basename(first_token).removesuffix(".exe")
@@ -262,9 +268,14 @@ def execute_bash_command(command: str) -> str:
         return f"BLOCKED: {reason}"
 
     try:
+        parsed_command = shlex.split(command, posix=(os.name != "nt"))
+    except ValueError as exc:
+        return f"ERROR: Invalid command syntax: {exc}"
+
+    try:
         result = subprocess.run(
-            command,
-            shell=True,
+            parsed_command,
+            shell=False,
             cwd=WORKSPACE_DIR,
             capture_output=True,
             text=True,
@@ -295,12 +306,17 @@ def execute_in_directory(directory: str, command: str) -> str:
     if not allowed:
         return f"BLOCKED: {reason}"
 
+    try:
+        parsed_command = shlex.split(command, posix=(os.name != "nt"))
+    except ValueError as exc:
+        return f"ERROR: Invalid command syntax: {exc}"
+
     os.makedirs(target, exist_ok=True)
 
     try:
         result = subprocess.run(
-            command,
-            shell=True,
+            parsed_command,
+            shell=False,
             cwd=target,
             capture_output=True,
             text=True,

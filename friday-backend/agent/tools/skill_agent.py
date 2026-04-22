@@ -19,10 +19,7 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
-from dotenv import load_dotenv
 from langchain_core.tools import tool
-
-load_dotenv()
 
 SKILLS_DIR: str = os.path.abspath(os.getenv("SKILLS_DIR", "./skills"))
 AGENTS_DIR: str = os.path.join(SKILLS_DIR, "agents")

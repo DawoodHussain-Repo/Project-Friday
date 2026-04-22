@@ -14,11 +14,8 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 import httpx
-from dotenv import load_dotenv
 from langchain_core.tools import StructuredTool, tool
 from pydantic import BaseModel, Field
-
-load_dotenv()
 
 SKILLS_DIR: str = os.path.abspath(os.getenv("SKILLS_DIR", "./skills"))
 MCP_REGISTRY_PATH: str = os.path.join(SKILLS_DIR, "mcp_tools.json")

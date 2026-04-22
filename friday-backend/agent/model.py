@@ -1,13 +1,10 @@
 import os
 from typing import Any
 
-from dotenv import load_dotenv
 import httpx
 from langchain_groq import ChatGroq
 from langchain_ollama import ChatOllama
 from langchain_openai import ChatOpenAI
-
-load_dotenv()
 
 
 def _discover_lmstudio_model(base_url: str, api_key: str, requested_model: str) -> str:

@@ -2,16 +2,24 @@ import os
 
 from langchain_core.tools import tool
 
+try:
+    from tavily import TavilyClient
+except Exception:  # pragma: no cover - optional dependency
+    TavilyClient = None
+
+try:
+    from duckduckgo_search import DDGS
+except Exception:  # pragma: no cover - optional dependency
+    DDGS = None
+
 
 @tool
 def web_search(query: str) -> str:
     """Searches the web for real-time information and returns a short summary."""
     tavily_api_key = os.getenv("TAVILY_API_KEY", "")
 
-    if tavily_api_key:
+    if tavily_api_key and TavilyClient is not None:
         try:
-            from tavily import TavilyClient
-
             client = TavilyClient(api_key=tavily_api_key)
             results = client.search(query=query, max_results=3)
             chunks = [r.get("content", "") for r in results.get("results", [])]
@@ -19,9 +27,10 @@ def web_search(query: str) -> str:
         except Exception as exc:
             return f"Web search failed: {exc}"
 
-    try:
-        from duckduckgo_search import DDGS
+    if DDGS is None:
+        return "No search provider available: install duckduckgo-search or configure Tavily."
 
+    try:
         rows = []
         with DDGS() as ddgs:
             for item in ddgs.text(query, max_results=3):

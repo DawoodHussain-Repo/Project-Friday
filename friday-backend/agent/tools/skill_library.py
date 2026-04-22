@@ -22,13 +22,10 @@ from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Any, Callable
 
-from dotenv import load_dotenv
 from langchain_core.tools import StructuredTool, tool
 from pydantic import BaseModel, Field
 
 from agent.tools.os_tools import COMMAND_TIMEOUT, WORKSPACE_DIR, safe_path
-
-load_dotenv()
 
 SKILLS_DIR: str = os.path.abspath(os.getenv("SKILLS_DIR", "./skills"))
 SKILL_INDEX_PATH: str = os.path.join(SKILLS_DIR, "index.json")
