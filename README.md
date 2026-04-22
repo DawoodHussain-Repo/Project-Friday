@@ -18,7 +18,8 @@
 | **Skill Agents** | Framework-specific knowledge bundles (Next.js, FastAPI, etc.) with dos/don'ts, style guides, scaffold steps |
 | **Self-Improvement** | Voyager-inspired: writes tool → tests → commits → reuses later |
 | **SSE Streaming** | Real-time thought/tool/result streaming to the chat UI |
-| **Multi-Provider LLM** | LM Studio (local), Groq, Ollama — switchable via env |
+| **Multi-Provider LLM** | Groq (cloud, recommended), LM Studio (local), Ollama — switchable via env |
+| **Structured Logging** | Automatic file rotation, performance tracking, error tracing — see `friday-backend/LOGGING.md` |
 
 ## Quick Start
 
@@ -26,7 +27,7 @@
 
 - Python 3.11+
 - Node.js 18+
-- LM Studio **or** Groq API key **or** Ollama
+- **Groq API key** (recommended) **or** LM Studio **or** Ollama
 
 ### ⚠️ Migration Note (v0.2.0)
 
@@ -90,14 +91,19 @@ npm run dev
 
 | Variable | Default | Description |
 |---|---|---|
-| `MODEL_PROVIDER` | `lmstudio` | LLM provider: `lmstudio`, `groq`, or `ollama` |
+| `MODEL_PROVIDER` | `groq` | LLM provider: `groq` (recommended), `lmstudio`, or `ollama` |
+| `GROQ_API_KEY` | *(required)* | Your Groq API key for cloud LLM access |
+| `GROQ_MODEL` | `llama-3.3-70b-versatile` | Groq model to use |
+| `MAX_TOKENS` | `8000` | Maximum tokens per LLM response |
+| `RECURSION_LIMIT` | `50` | LangGraph recursion hard cap |
+| `MAX_HISTORY_MESSAGES` | `50` | Number of recent messages to keep in context |
+| `MAX_INPUT_CHARS` | `100000` | Maximum input characters (for large context models) |
 | `WORKSPACE_DIR` | `./workspace` | Sandboxed file-system root |
 | `SKILLS_DIR` | `./skills` | Skill library + agents directory |
 | `COMMAND_TIMEOUT` | `120` | Max seconds for subprocess execution |
 | `COMMAND_ALLOWLIST` | `python,npm,...` | Comma-separated allowed command prefixes |
 | `ALLOWED_TARGET_DIRS` | *(empty)* | Dirs where agent can scaffold projects |
 | `MAX_TOOL_ATTEMPTS` | `3` | Retry budget for failed tool executions |
-| `RECURSION_LIMIT` | `25` | LangGraph recursion hard cap |
 
 ## Skill Agent System
 
@@ -131,6 +137,26 @@ Full architecture and API docs are in `docs/`. Build PDFs:
 cd docs
 pdflatex friday_architecture.tex
 pdflatex friday_api_reference.tex
+```
+
+### Logging
+
+Friday includes a comprehensive logging system for debugging and monitoring. See `friday-backend/LOGGING.md` for:
+- Log file locations and rotation
+- What gets logged (graph events, tool calls, performance, errors)
+- How to use logs for troubleshooting
+- Best practices for adding logging to new code
+
+**Quick log access:**
+```powershell
+# View main log
+tail -f friday-backend/logs/friday.log
+
+# View errors only
+tail -f friday-backend/logs/friday_errors.log
+
+# Search for specific thread
+grep "thread_id=abc123" friday-backend/logs/friday.log
 ```
 
 ---
