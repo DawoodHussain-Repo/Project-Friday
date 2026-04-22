@@ -39,11 +39,13 @@ jobs:
       - name: Run deterministic unit tests
         env:
           CHECKPOINTER_BACKEND: memory
+          PYTHONPATH: ${{ github.workspace }}/friday-backend
         run: pytest -q -m unit --junitxml=test-results/unit.xml --durations=20
 
       - name: Run mocked graph tests (no real LLM)
         env:
           CHECKPOINTER_BACKEND: memory
+          PYTHONPATH: ${{ github.workspace }}/friday-backend
         run: pytest -q -m mocked_graph --junitxml=test-results/mocked-graph.xml --durations=20
 
       - name: Upload backend test reports
