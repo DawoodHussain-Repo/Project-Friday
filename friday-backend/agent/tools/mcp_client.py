@@ -1,10 +1,9 @@
 from langchain_core.tools import tool
 
+from agent.tools.mcp_registry import execute_mcp_tool
+
 
 @tool
 def mcp_call(server_name: str, tool_name: str, payload: str = "{}") -> str:
-    """Calls a configured MCP server tool. Placeholder for Phase 2+ integration."""
-    return (
-        "MCP integration is not configured yet. "
-        f"Requested server={server_name}, tool={tool_name}, payload={payload}"
-    )
+    """Calls a registered MCP tool by server/name with JSON payload."""
+    return execute_mcp_tool(server_name=server_name, tool_name=tool_name, payload=payload)
